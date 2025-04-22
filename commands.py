@@ -54,16 +54,16 @@ async def play(self, interaction: discord.Interaction, url: str):
     async def play_track(self, interaction, url):
         vc = self.voice_clients[interaction.guild.id]
         ydl_opts = {
-            "format": "bestaudio",
-            "noplaylist": False,
-            "quiet": True,
-            "socket_timeout": 15,
-            "extract_flat": True,
-            "retries": 5,
-            "playlistend": 120,  # Уменьшено для ускорения
-            "no_warnings": True,
-            "proxy": "http://8.212.168.170:8888",  # Замени на актуальный прокси
-        }
+    "format": "bestaudio",
+    "noplaylist": False,
+    "quiet": True,
+    "socket_timeout": 10,  # Уменьшено
+    "extract_flat": True,
+    "retries": 10,  # Увеличено
+    "playlistend": 120,  # Уменьшено для ускорения
+    "no_warnings": True,
+    "proxy": "http://8.212.168.170:3128",  # Новый прокси (проверь актуальность)
+}
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
 
