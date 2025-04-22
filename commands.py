@@ -58,7 +58,7 @@ class Music(commands.Cog):
             "socket_timeout": 15,
             "extract_flat": True,
             "retries": 5,
-            "playlistend": 20,  # Уменьшено для ускорения
+            "playlistend": 120,  # Уменьшено для ускорения
             "no_warnings": True,
             "proxy": "http://51.15.242.202:8888",  # Замени на актуальный прокси
         }
