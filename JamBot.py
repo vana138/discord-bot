@@ -26,7 +26,7 @@ class JamBot(commands.Bot):
             print(f"Ошибка синхронизации команд: {e}")
 
 bot = JamBot()
-TOKEN = os.getenv("DISCORD_TOKEN")  # Читаем токен из переменной окружения
+TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
     raise ValueError("DISCORD_TOKEN не установлен в переменных окружения!")
 bot.run(TOKEN)
