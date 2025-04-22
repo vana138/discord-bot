@@ -94,7 +94,6 @@ class Music(commands.Cog):
     "retries": 5,
     "playlistend": 120,
     "no_warnings": True,
-    "proxy": "http://3.71.239.218:8888",  # Замени на актуальный прокси
 }
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
