@@ -86,15 +86,16 @@ class Music(commands.Cog):
                 return
         vc = self.voice_clients[interaction.guild.id]
         ydl_opts = {
-            "format": "bestaudio",
-            "noplaylist": False,  # Разрешаем плейлисты
-            "quiet": True,
-            "socket_timeout": 15,  # Увеличенный тайм-аут
-            "extract_flat": True,  # Быстрая обработка плейлистов
-            "retries": 5,  # Больше попыток при ошибках
-            "playlistend": 50,  # Ограничение на 50 треков
-            "no_warnings": True,  # Подавляем предупреждения
-        }
+    "format": "bestaudio",
+    "noplaylist": False,
+    "quiet": True,
+    "socket_timeout": 15,
+    "extract_flat": True,
+    "retries": 5,
+    "playlistend": 120,
+    "no_warnings": True,
+    "proxy": "http://3.71.239.218:8888",  # Замени на актуальный прокси
+}
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
         func = functools.partial(ydl.extract_info, url, download=False)
