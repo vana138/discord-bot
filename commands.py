@@ -5,6 +5,8 @@ from yt_dlp import YoutubeDL
 import asyncio
 import functools
 import logging
+import json
+import os
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +49,41 @@ class Music(commands.Cog):
         await self.play_track(interaction, url)
 
     async def play_track(self, interaction, url):
+       
+        def load_cache(playlist_url):
+            cache_file = "playlist_cache.json"
+            if os.path.exists(cache_file):
+                with open(cache_file, "r") as f:
+                    cache = json.load(f)
+                return cache.get(playlist_url, None)
+            return None
+
+        def save_cache(playlist_url, tracks):
+            cache_file = "playlist_cache.json"
+            cache = {}
+            if os.path.exists(cache_file):
+                with open(cache_file, "r") as f:
+                    cache = json.load(f)
+            cache[playlist_url] = tracks
+            with open(cache_file, "w") as f:
+                json.dump(cache, f)
+        
+        # Проверяем кэш
+        cached = load_cache(url)
+        if cached:
+            logger.info(f"Используем кэш для {url}")
+            info = cached
+        else:
+            func = functools.partial(ydl.extract_info, url, download=False)
+            try:
+                logger.info(f"Начинаем извлечение данных для URL: {url}")
+                info = await loop.run_in_executor(None, func)
+                logger.info("Данные успешно извлечены")
+                if "entries" in info:
+                    save_cache(url, info)  # Сохраняем в кэш
+            except Exception as e:
+                await interaction.followup.send(f"Ошибка при извлечении данных: {e}")
+                return
         vc = self.voice_clients[interaction.guild.id]
         ydl_opts = {
             "format": "bestaudio",
