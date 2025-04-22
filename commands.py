@@ -7,6 +7,7 @@ import functools
 import logging
 import json
 import os
+import time
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -49,7 +50,21 @@ class Music(commands.Cog):
         await self.play_track(interaction, url)
 
     async def play_track(self, interaction, url):
-       
+        vc = self.voice_clients[interaction.guild.id]
+        ydl_opts = {
+            "format": "bestaudio",
+            "noplaylist": False,
+            "quiet": True,
+            "socket_timeout": 15,
+            "extract_flat": True,
+            "retries": 5,
+            "playlistend": 20,  # Уменьшено для ускорения
+            "no_warnings": True,
+            "proxy": "http://51.15.242.202:8888",  # Замени на актуальный прокси
+        }
+        ydl = YoutubeDL(ydl_opts)
+        loop = asyncio.get_event_loop()
+
         def load_cache(playlist_url):
             cache_file = "playlist_cache.json"
             if os.path.exists(cache_file):
@@ -67,7 +82,7 @@ class Music(commands.Cog):
             cache[playlist_url] = tracks
             with open(cache_file, "w") as f:
                 json.dump(cache, f)
-        
+
         # Проверяем кэш
         cached = load_cache(url)
         if cached:
@@ -77,34 +92,14 @@ class Music(commands.Cog):
             func = functools.partial(ydl.extract_info, url, download=False)
             try:
                 logger.info(f"Начинаем извлечение данных для URL: {url}")
+                start_time = time.time()
                 info = await loop.run_in_executor(None, func)
-                logger.info("Данные успешно извлечены")
+                logger.info(f"Данные извлечены за {time.time() - start_time:.2f} секунд")
                 if "entries" in info:
                     save_cache(url, info)  # Сохраняем в кэш
             except Exception as e:
                 await interaction.followup.send(f"Ошибка при извлечении данных: {e}")
                 return
-        vc = self.voice_clients[interaction.guild.id]
-        ydl_opts = {
-    "format": "bestaudio",
-    "noplaylist": False,
-    "quiet": True,
-    "socket_timeout": 15,
-    "extract_flat": True,
-    "retries": 5,
-    "playlistend": 120,
-    "no_warnings": True,
-}
-        ydl = YoutubeDL(ydl_opts)
-        loop = asyncio.get_event_loop()
-        func = functools.partial(ydl.extract_info, url, download=False)
-        try:
-            logger.info(f"Начинаем извлечение данных для URL: {url}")
-            info = await loop.run_in_executor(None, func)
-            logger.info("Данные успешно извлечены")
-        except Exception as e:
-            await interaction.followup.send(f"Ошибка при извлечении данных: {e}")
-            return
 
         if "entries" in info:  # Если это плейлист
             first_track = info["entries"][0]
@@ -115,11 +110,14 @@ class Music(commands.Cog):
                 "socket_timeout": 15,
                 "retries": 5,
                 "no_warnings": True,
+                "proxy": "http://51.15.242.202:8888",  # Тот же прокси
             }
             ydl_full = YoutubeDL(ydl_opts_full)
             func_full = functools.partial(ydl_full.extract_info, first_track["url"], download=False)
             try:
+                start_time = time.time()
                 first_track_info = await loop.run_in_executor(None, func_full)
+                logger.info(f"Первый трек извлечён за {time.time() - start_time:.2f} секунд")
                 source = first_track_info["url"]
                 title = first_track_info.get("title", "Неизвестный трек")
             except Exception as e:
@@ -128,18 +126,20 @@ class Music(commands.Cog):
             # Добавляем остальные треки в очередь
             self.queue[interaction.guild.id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
         else:  # Если это одиночное видео
-            # Для одиночных видео извлекаем полные метаданные
             ydl_opts_full = {
                 "format": "bestaudio",
                 "quiet": True,
                 "socket_timeout": 15,
                 "retries": 5,
                 "no_warnings": True,
+                "proxy": "http://51.15.242.202:8888",  # Тот же прокси
             }
             ydl_full = YoutubeDL(ydl_opts_full)
             func_full = functools.partial(ydl_full.extract_info, url, download=False)
             try:
+                start_time = time.time()
                 info_full = await loop.run_in_executor(None, func_full)
+                logger.info(f"Одиночный трек извлечён за {time.time() - start_time:.2f} секунд")
                 source = info_full["url"]
                 title = info_full.get("title", "Неизвестный трек")
             except Exception as e:
@@ -156,24 +156,60 @@ class Music(commands.Cog):
         }
         vol = self.volume.get(interaction.guild.id, 1.0)
         audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
-        vc.play(audio_source, after=lambda e: self.after_track(interaction))
+        vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(interaction.guild.id)))
         await interaction.followup.send(f"Играет сейчас: **{title}**")
 
-    def after_track(self, interaction):
-        vc = self.voice_clients.get(interaction.guild.id)
+    async def after_track(self, guild_id):
+        vc = self.voice_clients.get(guild_id)
         if vc is None:
             return
-        if self.loop.get(interaction.guild.id, False):
-            source = self.current_sources.get(interaction.guild.id)
+        if self.loop.get(guild_id, False):
+            source = self.current_sources.get(guild_id)
             if source:
-                self.bot.loop.create_task(self.play_track(interaction, source))
-        elif self.queue.get(interaction.guild.id) and len(self.queue[interaction.guild.id]) > 0:
-            next_track = self.queue[interaction.guild.id].pop(0)
-            self.bot.loop.create_task(self.play_track(interaction, next_track["url"]))
-        elif self.loop_queue.get(interaction.guild.id, False) and self.queue.get(interaction.guild.id):
-            if len(self.queue[interaction.guild.id]) > 0:
-                first_url = self.queue[interaction.guild.id][0]["url"]
-                self.bot.loop.create_task(self.play_track(interaction, first_url))
+                self.bot.loop.create_task(self.play_track_from_url(guild_id, source))
+        elif self.queue.get(guild_id) and len(self.queue[guild_id]) > 0:
+            next_track = self.queue[guild_id].pop(0)
+            self.bot.loop.create_task(self.play_track_from_url(guild_id, next_track["url"]))
+        elif self.loop_queue.get(guild_id, False) and self.queue.get(guild_id):
+            if len(self.queue[guild_id]) > 0:
+                first_url = self.queue[guild_id][0]["url"]
+                self.bot.loop.create_task(self.play_track_from_url(guild_id, first_url))
+
+    async def play_track_from_url(self, guild_id, url):
+        vc = self.voice_clients.get(guild_id)
+        if not vc:
+            return
+        ydl_opts = {
+            "format": "bestaudio",
+            "quiet": True,
+            "socket_timeout": 15,
+            "retries": 5,
+            "no_warnings": True,
+            "proxy": "http://51.15.242.202:8888",  # Тот же прокси
+        }
+        ydl = YoutubeDL(ydl_opts)
+        loop = asyncio.get_event_loop()
+        func = functools.partial(ydl.extract_info, url, download=False)
+        try:
+            start_time = time.time()
+            info = await loop.run_in_executor(None, func)
+            logger.info(f"Трек из очереди извлечён за {time.time() - start_time:.2f} секунд")
+            source = info["url"]
+            title = info.get("title", "Неизвестный трек")
+        except Exception as e:
+            logger.error(f"Ошибка при извлечении трека из очереди: {e}")
+            self.bot.loop.create_task(self.after_track(guild_id))  # Пропускаем трек
+            return
+
+        self.current_tracks[guild_id] = title
+        self.current_sources[guild_id] = source
+        ffmpeg_options = {
+            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -bufsize 128k',
+            'options': '-vn'
+        }
+        vol = self.volume.get(guild_id, 1.0)
+        audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
+        vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(guild_id)))
 
     @app_commands.command(name="nowplaying", description="Показывает текущий трек")
     async def nowplaying(self, interaction: discord.Interaction):
@@ -245,7 +281,7 @@ class Music(commands.Cog):
                 ffmpeg_options = {'before_options': f'-ss {seconds} -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -bufsize 128k', 'options': '-vn'}
                 vol = self.volume.get(interaction.guild.id, 1.0)
                 new_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
-                vc.play(new_source)
+                vc.play(new_source, after=lambda e: self.bot.loop.create_task(self.after_track(interaction.guild.id)))
                 await interaction.response.send_message(f"Перемотано на {seconds} секунд.")
             else:
                 await interaction.response.send_message("Сейчас ничего не играет.")
