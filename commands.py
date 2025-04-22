@@ -110,7 +110,7 @@ class Music(commands.Cog):
                 "socket_timeout": 15,
                 "retries": 5,
                 "no_warnings": True,
-                "proxy": "http://51.15.242.202:8888",  # Тот же прокси
+                "proxy": "http://8.212.168.170:8888",  # Тот же прокси
             }
             ydl_full = YoutubeDL(ydl_opts_full)
             func_full = functools.partial(ydl_full.extract_info, first_track["url"], download=False)
