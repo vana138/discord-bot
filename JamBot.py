@@ -1,6 +1,8 @@
 import os
 import discord
 from discord.ext import commands
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -24,6 +26,19 @@ class JamBot(commands.Bot):
             print(f"Синхронизировано {len(synced)} команд:\n{commands_list}")
         except Exception as e:
             print(f"Ошибка синхронизации команд: {e}")
+
+class DummyServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running")
+
+def run_server():
+    port = int(os.getenv("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), DummyServer)
+    server.serve_forever()
+
+threading.Thread(target=run_server, daemon=True).start()
 
 bot = JamBot()
 TOKEN = os.getenv("DISCORD_TOKEN")
