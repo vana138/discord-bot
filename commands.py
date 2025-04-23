@@ -24,27 +24,33 @@ class Music(commands.Cog):
         self.loop_queue = {}            # повтор всей очереди (bool) по guild_id
         self.volume = {}                # уровень громкости (float, 1.0 по умолчанию) по guild_id
 
-    @app_commands.command(name="play", description="Воспроизводит музыку из указанного URL")
-async def play(self, interaction: discord.Interaction, url: str):
-    # Немедленно откладываем ответ, чтобы избежать ошибки Unknown Interaction
-    await interaction.response.defer(thinking=True)
-    
-    if not interaction.user.voice or not interaction.user.voice.channel:
-        await interaction.followup.send("Вы должны находиться в голосовом канале!")
-        return
-
-    voice_channel = interaction.user.voice.channel
-    try:
-        if interaction.guild.id not in self.voice_clients or not self.voice_clients[interaction.guild.id].is_connected():
-            vc = await voice_channel.connect()
-            self.voice_clients[interaction.guild.id] = vc
-            self.volume[interaction.guild.id] = 1.0
-        else:
-            vc = self.voice_clients[interaction.guild.id]
-        if vc.is_playing():
-            self.queue.setdefault(interaction.guild.id, []).append({"url": url, "title": "Неизвестный трек"})
-            await interaction.followup.send("Трек добавлен в очередь!")
+   @app_commands.command(name="play", description="Воспроизводит музыку из указанного URL")
+    async def play(self, interaction: discord.Interaction, url: str):
+        # Немедленно откладываем ответ, чтобы избежать ошибки Unknown Interaction
+        await interaction.response.defer(thinking=True)
+        
+        if not interaction.user.voice or not interaction.user.voice.channel:
+            await interaction.followup.send("Вы должны находиться в голосовом канале!")
             return
+
+        voice_channel = interaction.user.voice.channel
+        try:
+            if interaction.guild.id not in self.voice_clients or not self.voice_clients[interaction.guild.id].is_connected():
+                vc = await voice_channel.connect()
+                self.voice_clients[interaction.guild.id] = vc
+                self.volume[interaction.guild.id] = 1.0
+                logger.info(f"Подключено к голосовому каналу {voice_channel.name} за {time.time() - start_time:.2f} секунд")
+            else:
+                vc = self.voice_clients[interaction.guild.id]
+            if vc.is_playing():
+                self.queue.setdefault(interaction.guild.id, []).append({"url": url, "title": "Неизвестный трек"})
+                await interaction.followup.send("Трек добавлен в очередь!")
+                return
+        except Exception as e:
+            await interaction.followup.send(f"Ошибка подключения к голосовому каналу: {e}")
+            return
+
+        await self.play_track(interaction, url)
     except Exception as e:
         await interaction.followup.send(f"Ошибка подключения к голосовому каналу: {e}")
         return
