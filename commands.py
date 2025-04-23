@@ -8,6 +8,10 @@ import logging
 import json
 import os
 import time
+import shutil
+
+
+logger.info(f"FFmpeg available: {shutil.which('ffmpeg')}")
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
