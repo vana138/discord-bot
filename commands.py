@@ -24,10 +24,11 @@ class Music(commands.Cog):
         self.loop_queue = {}            # повтор всей очереди (bool) по guild_id
         self.volume = {}                # уровень громкости (float, 1.0 по умолчанию) по guild_id
 
-   @app_commands.command(name="play", description="Воспроизводит музыку из указанного URL")
+    @app_commands.command(name="play", description="Воспроизводит музыку из указанного URL")
     async def play(self, interaction: discord.Interaction, url: str):
         # Немедленно откладываем ответ, чтобы избежать ошибки Unknown Interaction
         await interaction.response.defer(thinking=True)
+        start_time = time.time()
         
         if not interaction.user.voice or not interaction.user.voice.channel:
             await interaction.followup.send("Вы должны находиться в голосовом канале!")
