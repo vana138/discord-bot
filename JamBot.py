@@ -7,7 +7,7 @@ import logging
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(name)
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -16,8 +16,8 @@ intents.voice_states = True
 intents.message_content = True
 
 class JamBot(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="/", intents=intents, application_id="1330922461973450813")
+    def init(self):
+        super().init(command_prefix="/", intents=intents, application_id="1330922461973450813")
         logger.info("Инициализация бота")
 
     async def setup_hook(self):
