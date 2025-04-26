@@ -28,6 +28,8 @@ class Music(commands.Cog):
         self.loop_queue = {}            # повтор всей очереди (bool) по guild_id
         self.volume = {}                # уровень громкости (float, 1.0 по умолчанию) по guild_id
 
+
+
     @app_commands.command(name="play", description="Воспроизводит музыку из указанного URL")
     async def play(self, interaction: discord.Interaction, url: str):
         # Немедленно откладываем ответ, чтобы избежать ошибки Unknown Interaction
@@ -51,6 +53,7 @@ class Music(commands.Cog):
                 self.queue.setdefault(interaction.guild.id, []).append({"url": url, "title": "Неизвестный трек"})
                 await interaction.followup.send("Трек добавлен в очередь!")
                 return
+            await self.play_track(interaction, url)
         except Exception as e:
             await interaction.followup.send(f"Ошибка подключения к голосовому каналу: {e}")
             return
