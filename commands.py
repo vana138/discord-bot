@@ -12,13 +12,13 @@ import shutil
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(name)
 
-# Диагностика FFmpeg (после настройки логирования)
+# Диагностика FFmpeg
 logger.info(f"FFmpeg available: {shutil.which('ffmpeg')}")
 
 class Music(commands.Cog):
-    def __init__(self, bot):
+    def init(self, bot):
         self.bot = bot
         self.voice_clients = {}         # voice_client по guild_id
         self.current_tracks = {}        # название текущего трека по guild_id
@@ -62,12 +62,13 @@ class Music(commands.Cog):
             "format": "bestaudio",
             "noplaylist": False,
             "quiet": True,
-            "socket_timeout": 10,
+            "socket_timeout": 15,  # Увеличено с 10 до 15
             "extract_flat": True,
             "retries": 10,
-            "playlistend": 120,
+            "max_retries": 3,  # Добавлено для повторных попыток
+            "playlistend": 120,  # Оставлено по твоему требованию
             "no_warnings": True,
-            "proxy": "http://8.212.168.170:3128",
+            # "proxy": "http://8.212.168.170:3128",  # Отключено для теста
         }
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
@@ -89,8 +90,7 @@ class Music(commands.Cog):
             cache[playlist_url] = tracks
             with open(cache_file, "w") as f:
                 json.dump(cache, f)
-
-        # Проверяем кэш
+                # Проверяем кэш
         cached = load_cache(url)
         if cached:
             logger.info(f"Используем кэш для {url}")
@@ -105,7 +105,11 @@ class Music(commands.Cog):
                 if "entries" in info:
                     save_cache(url, info)
             except Exception as e:
-                await interaction.followup.send(f"Ошибка при извлечении данных: {e}")
+                logger.error(f"Ошибка при извлечении данных: {e}")
+                await interaction.followup.send(
+                    "Не удалось загрузить плейлист или трек. Возможно, проблема с сетью или YouTube API. "
+                    "Попробуйте снова или используйте другой URL."
+                )
                 return
 
         if "entries" in info:  # Если это плейлист
@@ -115,8 +119,9 @@ class Music(commands.Cog):
                 "quiet": True,
                 "socket_timeout": 15,
                 "retries": 5,
+                "max_retries": 3,  # Добавлено
                 "no_warnings": True,
-                "proxy": "http://8.212.168.170:8888",
+                # "proxy": "http://8.212.168.170:8888",  # Отключено для теста
             }
             ydl_full = YoutubeDL(ydl_opts_full)
             func_full = functools.partial(ydl_full.extract_info, first_track["url"], download=False)
@@ -136,8 +141,9 @@ class Music(commands.Cog):
                 "quiet": True,
                 "socket_timeout": 15,
                 "retries": 5,
+                "max_retries": 3,  # Добавлено
                 "no_warnings": True,
-                "proxy": "http://51.15.242.202:8888",
+                # "proxy": "http://51.15.242.202:8888",  # Отключено для теста
             }
             ydl_full = YoutubeDL(ydl_opts_full)
             func_full = functools.partial(ydl_full.extract_info, url, download=False)
@@ -162,9 +168,8 @@ class Music(commands.Cog):
         vol = self.volume.get(interaction.guild.id, 1.0)
         audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
         vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(interaction.guild.id)))
-        await interaction.followup.send(f"Играет сейчас: **{title}**")
-
-    async def after_track(self, guild_id):
+        await interaction.followup.send(f"Играет сейчас: {title}")
+        async def after_track(self, guild_id):
         vc = self.voice_clients.get(guild_id)
         if vc is None:
             return
@@ -189,8 +194,9 @@ class Music(commands.Cog):
             "quiet": True,
             "socket_timeout": 15,
             "retries": 5,
+            "max_retries": 3,  # Добавлено
             "no_warnings": True,
-            "proxy": "http://51.15.242.202:8888",
+            # "proxy": "http://51.15.242.202:8888",  # Отключено для теста
         }
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
@@ -220,7 +226,7 @@ class Music(commands.Cog):
     async def nowplaying(self, interaction: discord.Interaction):
         title = self.current_tracks.get(interaction.guild.id, None)
         if title:
-            await interaction.response.send_message(f"Сейчас играет: **{title}**")
+            await interaction.response.send_message(f"Сейчас играет: {title}")
         else:
             await interaction.response.send_message("Сейчас ничего не играет.")
 
@@ -243,7 +249,7 @@ class Music(commands.Cog):
             if vc.is_paused():
                 vc.resume()
                 title = self.current_tracks.get(interaction.guild.id, "Неизвестный трек")
-                await interaction.response.send_message(f"Воспроизведение продолжено: **{title}**")
+                await interaction.response.send_message(f"Воспроизведение продолжено: {title}")
             else:
                 await interaction.response.send_message("Музыка уже воспроизводится.")
         else:
@@ -257,7 +263,7 @@ class Music(commands.Cog):
             del self.voice_clients[interaction.guild.id]
             self.current_tracks.pop(interaction.guild.id, None)
             self.current_sources.pop(interaction.guild.id, None)
-            await interaction.response.send_message("Воспроизведение остановлено и бот отключен от канала.")
+            await interaction.followup.send("Воспроизведение остановлено и бот отключен от канала.")
         else:
             await interaction.response.send_message("Бот не подключен к голосовому каналу.")
 
