@@ -10,7 +10,7 @@ import os
 import time
 import shutil
 
-
+# Диагностика FFmpeg
 logger.info(f"FFmpeg available: {shutil.which('ffmpeg')}")
 
 # Настройка логирования
@@ -27,8 +27,6 @@ class Music(commands.Cog):
         self.loop = {}                  # повтор текущего трека (bool) по guild_id
         self.loop_queue = {}            # повтор всей очереди (bool) по guild_id
         self.volume = {}                # уровень громкости (float, 1.0 по умолчанию) по guild_id
-
-
 
     @app_commands.command(name="play", description="Воспроизводит музыку из указанного URL")
     async def play(self, interaction: discord.Interaction, url: str):
@@ -58,25 +56,18 @@ class Music(commands.Cog):
             await interaction.followup.send(f"Ошибка подключения к голосовому каналу: {e}")
             return
 
-        await self.play_track(interaction, url)
-    except Exception as e:
-        await interaction.followup.send(f"Ошибка подключения к голосовому каналу: {e}")
-        return
-
-    await self.play_track(interaction, url)
-
     async def play_track(self, interaction, url):
         vc = self.voice_clients[interaction.guild.id]
         ydl_opts = {
-        "format": "bestaudio",
-        "noplaylist": False,
-        "quiet": True,
-        "socket_timeout": 10,  # Уменьшено
-        "extract_flat": True,
-        "retries": 10,  # Увеличено
-        "playlistend": 120,  # Уменьшено для ускорения
-        "no_warnings": True,
-        "proxy": "http://8.212.168.170:3128",  # Новый прокси (проверь актуальность)
+            "format": "bestaudio",
+            "noplaylist": False,
+            "quiet": True,
+            "socket_timeout": 10,
+            "extract_flat": True,
+            "retries": 10,
+            "playlistend": 120,
+            "no_warnings": True,
+            "proxy": "http://8.212.168.170:3128",
         }
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
@@ -112,21 +103,20 @@ class Music(commands.Cog):
                 info = await loop.run_in_executor(None, func)
                 logger.info(f"Данные извлечены за {time.time() - start_time:.2f} секунд")
                 if "entries" in info:
-                    save_cache(url, info)  # Сохраняем в кэш
+                    save_cache(url, info)
             except Exception as e:
                 await interaction.followup.send(f"Ошибка при извлечении данных: {e}")
                 return
 
         if "entries" in info:  # Если это плейлист
             first_track = info["entries"][0]
-            # Извлекаем полные метаданные только для первого трека
             ydl_opts_full = {
                 "format": "bestaudio",
                 "quiet": True,
                 "socket_timeout": 15,
                 "retries": 5,
                 "no_warnings": True,
-                "proxy": "http://8.212.168.170:8888",  # Тот же прокси
+                "proxy": "http://8.212.168.170:8888",
             }
             ydl_full = YoutubeDL(ydl_opts_full)
             func_full = functools.partial(ydl_full.extract_info, first_track["url"], download=False)
@@ -139,7 +129,6 @@ class Music(commands.Cog):
             except Exception as e:
                 await interaction.followup.send(f"Ошибка при извлечении первого трека: {e}")
                 return
-            # Добавляем остальные треки в очередь
             self.queue[interaction.guild.id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
         else:  # Если это одиночное видео
             ydl_opts_full = {
@@ -148,7 +137,7 @@ class Music(commands.Cog):
                 "socket_timeout": 15,
                 "retries": 5,
                 "no_warnings": True,
-                "proxy": "http://51.15.242.202:8888",  # Тот же прокси
+                "proxy": "http://51.15.242.202:8888",
             }
             ydl_full = YoutubeDL(ydl_opts_full)
             func_full = functools.partial(ydl_full.extract_info, url, download=False)
@@ -201,7 +190,7 @@ class Music(commands.Cog):
             "socket_timeout": 15,
             "retries": 5,
             "no_warnings": True,
-            "proxy": "http://51.15.242.202:8888",  # Тот же прокси
+            "proxy": "http://51.15.242.202:8888",
         }
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
@@ -214,7 +203,7 @@ class Music(commands.Cog):
             title = info.get("title", "Неизвестный трек")
         except Exception as e:
             logger.error(f"Ошибка при извлечении трека из очереди: {e}")
-            self.bot.loop.create_task(self.after_track(guild_id))  # Пропускаем трек
+            self.bot.loop.create_task(self.after_track(guild_id))
             return
 
         self.current_tracks[guild_id] = title
