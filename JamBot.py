@@ -8,7 +8,6 @@ import logging
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(name)
-
 intents = discord.Intents.default()
 intents.messages = True
 intents.guilds = True
