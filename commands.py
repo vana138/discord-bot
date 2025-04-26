@@ -10,12 +10,12 @@ import os
 import time
 import shutil
 
-# Диагностика FFmpeg
-logger.info(f"FFmpeg available: {shutil.which('ffmpeg')}")
-
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Диагностика FFmpeg (после настройки логирования)
+logger.info(f"FFmpeg available: {shutil.which('ffmpeg')}")
 
 class Music(commands.Cog):
     def __init__(self, bot):
