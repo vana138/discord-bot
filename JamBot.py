@@ -38,6 +38,10 @@ class JamBot(commands.Bot):
         except Exception as e:
             logger.error(f"Ошибка синхронизации команд: {e}")
 
+    async def on_voice_state_update(self, member, before, after):
+        if member.id == self.user.id and before.channel and not after.channel:
+            logger.info(f"Бот был отключён от голосового канала {before.channel.name}")
+
 class DummyServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
