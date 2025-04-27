@@ -27,6 +27,7 @@ class Music(commands.Cog):
         self.loop = {}                  # повтор текущего трека (bool) по guild_id
         self.loop_queue = {}            # повтор всей очереди (bool) по guild_id
         self.volume = {}                # уровень громкости (float, 1.0 по умолчанию) по guild_id
+        self.voice_channel_ids = {}     # ID голосового канала по guild_id
 
     @app_commands.command(name="play", description="Воспроизводит музыку из указанного URL")
     async def play(self, interaction: discord.Interaction, url: str):
@@ -40,6 +41,7 @@ class Music(commands.Cog):
 
         voice_channel = interaction.user.voice.channel
         guild_id = interaction.guild.id
+        self.voice_channel_ids[guild_id] = voice_channel.id  # Сохраняем ID канала
         try:
             # Проверяем, подключён ли бот и действителен ли voice_client
             if guild_id in self.voice_clients:
@@ -199,17 +201,23 @@ class Music(commands.Cog):
         self.loop[guild_id] = False
 
         ffmpeg_options = {
-            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -bufsize 128k',
+            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -bufsize 256k',
             'options': '-vn'
         }
         vol = self.volume.get(guild_id, 1.0)
         audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
-        vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(guild_id)))
-        await interaction.followup.send(f"Играет сейчас: **{title}**")
+        try:
+            vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(guild_id)))
+            logger.info(f"Воспроизведение начато: {title}")
+            await interaction.followup.send(f"Играет сейчас: **{title}**")
+        except discord.ClientException as e:
+            logger.error(f"Ошибка воспроизведения: {e}")
+            await interaction.followup.send("Ошибка воспроизведения. Попробуйте снова.")
 
     async def after_track(self, guild_id):
         vc = self.voice_clients.get(guild_id)
         if vc is None or not vc.is_connected():
+            logger.info(f"Нет активного голосового соединения для guild_id {guild_id}")
             return
         if self.loop.get(guild_id, False):
             source = self.current_sources.get(guild_id)
@@ -226,7 +234,25 @@ class Music(commands.Cog):
     async def play_track_from_url(self, guild_id, url):
         vc = self.voice_clients.get(guild_id)
         if not vc or not vc.is_connected():
-            return
+            voice_channel_id = self.voice_channel_ids.get(guild_id)
+            if voice_channel_id:
+                voice_channel = self.bot.get_channel(voice_channel_id)
+                if voice_channel:
+                    try:
+                        vc = await voice_channel.connect(reconnect=True, timeout=10.0)
+                        self.voice_clients[guild_id] = vc
+                        logger.info(f"Переподключено к голосовому каналу {voice_channel.name}")
+                    except Exception as e:
+                        logger.error(f"Не удалось переподключиться: {e}")
+                        return
+                else:
+                    logger.error("Голосовой канал не найден")
+                    return
+            else:
+                logger.error("ID голосового канала не сохранён")
+                return
+
+        logger.info(f"Попытка воспроизвести трек для guild_id {guild_id}, URL: {url}")
         ydl_opts = {
             "format": "bestaudio",
             "quiet": True,
@@ -243,23 +269,28 @@ class Music(commands.Cog):
         try:
             start_time = time.time()
             info = await loop.run_in_executor(None, func)
-            logger.info(f"Трек из очереди извлечён за {time.time() - start_time:.2f} секунд")
+            logger.info(f"Трек извлечён за {time.time() - start_time:.2f} секунд")
             source = info["url"]
             title = info.get("title", "Неизвестный трек")
         except Exception as e:
-            logger.error(f"Ошибка при извлечении трека из очереди: {e}")
+            logger.error(f"Ошибка извлечения трека: {e}")
             self.bot.loop.create_task(self.after_track(guild_id))
             return
 
         self.current_tracks[guild_id] = title
         self.current_sources[guild_id] = source
         ffmpeg_options = {
-            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -bufsize 128k',
+            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -bufsize 256k',
             'options': '-vn'
         }
         vol = self.volume.get(guild_id, 1.0)
         audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
-        vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(guild_id)))
+        try:
+            vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(guild_id)))
+            logger.info(f"Воспроизведение начато: {title}")
+        except discord.ClientException as e:
+            logger.error(f"Ошибка воспроизведения: {e}")
+            return
 
     @app_commands.command(name="nowplaying", description="Показывает текущий трек")
     async def nowplaying(self, interaction: discord.Interaction):
@@ -328,7 +359,7 @@ class Music(commands.Cog):
                     await interaction.response.send_message("Текущий трек не найден!")
                     return
                 vc.stop()
-                ffmpeg_options = {'before_options': f'-ss {seconds} -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -bufsize 128k', 'options': '-vn'}
+                ffmpeg_options = {'before_options': f'-ss {seconds} -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -bufsize 256k', 'options': '-vn'}
                 vol = self.volume.get(interaction.guild.id, 1.0)
                 new_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
                 vc.play(new_source, after=lambda e: self.bot.loop.create_task(self.after_track(interaction.guild.id)))
