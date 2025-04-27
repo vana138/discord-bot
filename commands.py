@@ -62,13 +62,13 @@ class Music(commands.Cog):
             "format": "bestaudio",
             "noplaylist": False,
             "quiet": True,
-            "socket_timeout": 15,  # Увеличено с 10 до 15
+            "socket_timeout": 15,
             "extract_flat": True,
             "retries": 10,
-            "max_retries": 3,  # Добавлено для повторных попыток
-            "playlistend": 120,  # Оставлено по твоему требованию
+            "max_retries": 3,
+            "playlistend": 120,
             "no_warnings": True,
-            # "proxy": "http://8.212.168.170:3128",  # Отключено для теста
+            "cookiefile": "cookies.txt",  # Добавлено для аутентификации
         }
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
@@ -108,7 +108,7 @@ class Music(commands.Cog):
             except Exception as e:
                 logger.error(f"Ошибка при извлечении данных: {e}")
                 await interaction.followup.send(
-                    "Не удалось загрузить плейлист или трек. Возможно, проблема с сетью или YouTube API. "
+                    "Не удалось загрузить плейлист или трек. Возможно, проблема с сетью, YouTube API или требуется аутентификация. "
                     "Попробуйте снова или используйте другой URL."
                 )
                 return
@@ -120,9 +120,9 @@ class Music(commands.Cog):
                 "quiet": True,
                 "socket_timeout": 15,
                 "retries": 5,
-                "max_retries": 3,  # Добавлено
+                "max_retries": 3,
                 "no_warnings": True,
-                # "proxy": "http://8.212.168.170:8888",  # Отключено для теста
+                "cookiefile": "cookies.txt",  # Добавлено
             }
             ydl_full = YoutubeDL(ydl_opts_full)
             func_full = functools.partial(ydl_full.extract_info, first_track["url"], download=False)
@@ -142,9 +142,9 @@ class Music(commands.Cog):
                 "quiet": True,
                 "socket_timeout": 15,
                 "retries": 5,
-                "max_retries": 3,  # Добавлено
+                "max_retries": 3,
                 "no_warnings": True,
-                # "proxy": "http://51.15.242.202:8888",  # Отключено для теста
+                "cookiefile": "cookies.txt",  # Добавлено
             }
             ydl_full = YoutubeDL(ydl_opts_full)
             func_full = functools.partial(ydl_full.extract_info, url, download=False)
@@ -196,9 +196,9 @@ class Music(commands.Cog):
             "quiet": True,
             "socket_timeout": 15,
             "retries": 5,
-            "max_retries": 3,  # Добавлено
+            "max_retries": 3,
             "no_warnings": True,
-            # "proxy": "http://51.15.242.202:8888",  # Отключено для теста
+            "cookiefile": "cookies.txt",  # Добавлено
         }
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
@@ -265,7 +265,7 @@ class Music(commands.Cog):
             del self.voice_clients[interaction.guild.id]
             self.current_tracks.pop(interaction.guild.id, None)
             self.current_sources.pop(interaction.guild.id, None)
-            await interaction.followup.send("Воспроизведение остановлено и бот отключен от канала.")
+            await interaction.response.send_message("Воспроизведение остановлено и бот отключен от канала.")
         else:
             await interaction.response.send_message("Бот не подключен к голосовому каналу.")
 
