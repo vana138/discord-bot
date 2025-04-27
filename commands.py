@@ -32,7 +32,6 @@ class Music(commands.Cog):
 
     @app_commands.command(name="play", description="Воспроизводит музыку из указанного URL")
     async def play(self, interaction: discord.Interaction, url: str):
-        # Немедленно откладываем ответ
         defer_start = time.time()
         try:
             await interaction.response.defer(thinking=True)
@@ -55,7 +54,6 @@ class Music(commands.Cog):
         guild_id = interaction.guild.id
         self.voice_channel_ids[guild_id] = voice_channel.id
         try:
-            # Проверяем, подключён ли бот и действителен ли voice_client
             if guild_id in self.voice_clients:
                 vc = self.voice_clients[guild_id]
                 if not vc.is_connected():
@@ -65,9 +63,8 @@ class Music(commands.Cog):
                     await vc.disconnect(force=True)
                     del self.voice_clients[guild_id]
 
-            # Подключаемся, если не подключены
             if guild_id not in self.voice_clients:
-                vc = await voice_channel.connect(reconnect=True, timeout=3.0)  # Уменьшен таймаут
+                vc = await voice_channel.connect(reconnect=True, timeout=3.0)
                 self.voice_clients[guild_id] = vc
                 self.volume[guild_id] = 1.0
                 logger.info(f"Подключено к голосовому каналу {voice_channel.name} за {time.time() - start_time:.2f} секунд")
@@ -143,10 +140,10 @@ class Music(commands.Cog):
                     save_cache(url, info)
             except Exception as e:
                 logger.error(f"Ошибка при извлечении данных: {e}")
-                await interaction.followup.send(
-                    "Не удалось загрузить плейлист или трек. "
-                    "Проверьте URL или добавьте действительный файл cookies.txt для YouTube."
-                )
+                error_msg = "Не удалось загрузить плейлист или трек. Проверьте URL."
+                if "Sign in to confirm you’re not a bot" in str(e):
+                    error_msg += " Для доступа к некоторым видео нужен файл cookies.txt. См. инструкции: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
+                await interaction.followup.send(error_msg)
                 return
 
         if "entries" in info:
@@ -171,10 +168,10 @@ class Music(commands.Cog):
                 title = first_track_info.get("title", "Неизвестный трек")
             except Exception as e:
                 logger.error(f"Ошибка при извлечении первого трека: {e}")
-                await interaction.followup.send(
-                    "Не удалось загрузить первый трек плейлиста. "
-                    "Проверьте URL или добавьте действительный файл cookies.txt для YouTube."
-                )
+                error_msg = "Не удалось загрузить первый трек плейлиста. Проверьте URL."
+                if "Sign in to confirm you’re not a bot" in str(e):
+                    error_msg += " Для доступа к некоторым видео нужен файл cookies.txt. См. инструкции: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
+                await interaction.followup.send(error_msg)
                 return
             self.queue[guild_id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
         else:
@@ -198,10 +195,10 @@ class Music(commands.Cog):
                 title = info_full.get("title", "Неизвестный трек")
             except Exception as e:
                 logger.error(f"Ошибка при извлечении трека: {e}")
-                await interaction.followup.send(
-                    "Не удалось загрузить трек. "
-                    "Проверьте URL или добавьте действительный файл cookies.txt для YouTube."
-                )
+                error_msg = "Не удалось загрузить трек. Проверьте URL."
+                if "Sign in to confirm you’re not a bot" in str(e):
+                    error_msg += " Для доступа к некоторым видео нужен файл cookies.txt. См. инструкции: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
+                await interaction.followup.send(error_msg)
                 return
 
         async with aiohttp.ClientSession() as session:
@@ -318,6 +315,9 @@ class Music(commands.Cog):
         vol = self.volume.get(guild_id, 1.0)
         audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
         try:
+            if vc.is_playing():
+                vc.stop()
+                await asyncio.sleep(0.5)  # Небольшая задержка для завершения предыдущего процесса
             vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(guild_id)))
             logger.info(f"Воспроизведение начато: {title}")
         except discord.ClientException as e:
