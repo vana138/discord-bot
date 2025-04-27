@@ -9,6 +9,7 @@ import json
 import os
 import time
 import shutil
+import aiohttp  # Добавляем для проверки URL
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -31,8 +32,14 @@ class Music(commands.Cog):
 
     @app_commands.command(name="play", description="Воспроизводит музыку из указанного URL")
     async def play(self, interaction: discord.Interaction, url: str):
-        # Немедленно откладываем ответ, чтобы избежать ошибки Unknown Interaction
-        await interaction.response.defer(thinking=True)
+        # Немедленно откладываем ответ
+        try:
+            await interaction.response.defer(thinking=True)
+        except Exception as e:
+            logger.error(f"Ошибка при defer: {e}")
+            await interaction.followup.send("Произошла ошибка при обработке команды.")
+            return
+
         start_time = time.time()
         
         if not interaction.user.voice or not interaction.user.voice.channel:
@@ -57,7 +64,7 @@ class Music(commands.Cog):
 
             # Подключаемся, если не подключены
             if guild_id not in self.voice_clients:
-                vc = await voice_channel.connect(reconnect=True, timeout=10.0)
+                vc = await voice_channel.connect(reconnect=True, timeout=5.0)  # Уменьшен таймаут
                 self.voice_clients[guild_id] = vc
                 self.volume[guild_id] = 1.0
                 logger.info(f"Подключено к голосовому каналу {voice_channel.name} за {time.time() - start_time:.2f} секунд")
@@ -92,7 +99,6 @@ class Music(commands.Cog):
             "playlistend": 120,
             "no_warnings": True,
         }
-        # Проверяем наличие cookies.txt
         if os.path.exists("cookies.txt"):
             ydl_opts["cookiefile"] = "cookies.txt"
         else:
@@ -196,13 +202,26 @@ class Music(commands.Cog):
                 )
                 return
 
+        # Проверка доступности URL
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.head(source, timeout=5) as response:
+                    if response.status != 200:
+                        logger.error(f"URL недоступен: {source}, статус: {response.status}")
+                        await interaction.followup.send("Не удалось загрузить трек. Попробуйте другой URL.")
+                        return
+            except Exception as e:
+                logger.error(f"Ошибка при проверке URL: {e}")
+                await interaction.followup.send("Произошла ошибка при проверке URL.")
+                return
+
         self.current_tracks[guild_id] = title
         self.current_sources[guild_id] = source
         self.loop[guild_id] = False
 
         ffmpeg_options = {
-            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -bufsize 256k',
-            'options': '-vn'
+            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10',
+            'options': '-vn -bufsize 256k'
         }
         vol = self.volume.get(guild_id, 1.0)
         audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
@@ -239,7 +258,7 @@ class Music(commands.Cog):
                 voice_channel = self.bot.get_channel(voice_channel_id)
                 if voice_channel:
                     try:
-                        vc = await voice_channel.connect(reconnect=True, timeout=10.0)
+                        vc = await voice_channel.connect(reconnect=True, timeout=5.0)
                         self.voice_clients[guild_id] = vc
                         logger.info(f"Переподключено к голосовому каналу {voice_channel.name}")
                     except Exception as e:
@@ -277,11 +296,24 @@ class Music(commands.Cog):
             self.bot.loop.create_task(self.after_track(guild_id))
             return
 
+        # Проверка доступности URL
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.head(source, timeout=5) as response:
+                    if response.status != 200:
+                        logger.error(f"URL недоступен: {source}, статус: {response.status}")
+                        self.bot.loop.create_task(self.after_track(guild_id))
+                        return
+            except Exception as e:
+                logger.error(f"Ошибка при проверке URL: {e}")
+                self.bot.loop.create_task(self.after_track(guild_id))
+                return
+
         self.current_tracks[guild_id] = title
         self.current_sources[guild_id] = source
         ffmpeg_options = {
-            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -bufsize 256k',
-            'options': '-vn'
+            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10',
+            'options': '-vn -bufsize 256k'
         }
         vol = self.volume.get(guild_id, 1.0)
         audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
@@ -359,7 +391,10 @@ class Music(commands.Cog):
                     await interaction.response.send_message("Текущий трек не найден!")
                     return
                 vc.stop()
-                ffmpeg_options = {'before_options': f'-ss {seconds} -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -bufsize 256k', 'options': '-vn'}
+                ffmpeg_options = {
+                    'before_options': f'-ss {seconds} -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10',
+                    'options': '-vn -bufsize 256k'
+                }
                 vol = self.volume.get(interaction.guild.id, 1.0)
                 new_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
                 vc.play(new_source, after=lambda e: self.bot.loop.create_task(self.after_track(interaction.guild.id)))
