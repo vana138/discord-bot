@@ -9,7 +9,7 @@ import json
 import os
 import time
 import shutil
-import aiohttp  # Добавляем для проверки URL
+import aiohttp
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -33,11 +33,16 @@ class Music(commands.Cog):
     @app_commands.command(name="play", description="Воспроизводит музыку из указанного URL")
     async def play(self, interaction: discord.Interaction, url: str):
         # Немедленно откладываем ответ
+        defer_start = time.time()
         try:
             await interaction.response.defer(thinking=True)
+            logger.info(f"Defer выполнен за {time.time() - defer_start:.2f} секунд")
         except Exception as e:
             logger.error(f"Ошибка при defer: {e}")
-            await interaction.followup.send("Произошла ошибка при обработке команды.")
+            try:
+                await interaction.followup.send("Произошла ошибка при обработке команды.")
+            except Exception as followup_e:
+                logger.error(f"Ошибка при отправке followup: {followup_e}")
             return
 
         start_time = time.time()
@@ -48,23 +53,21 @@ class Music(commands.Cog):
 
         voice_channel = interaction.user.voice.channel
         guild_id = interaction.guild.id
-        self.voice_channel_ids[guild_id] = voice_channel.id  # Сохраняем ID канала
+        self.voice_channel_ids[guild_id] = voice_channel.id
         try:
             # Проверяем, подключён ли бот и действителен ли voice_client
             if guild_id in self.voice_clients:
                 vc = self.voice_clients[guild_id]
                 if not vc.is_connected():
-                    # Очищаем устаревший voice_client
                     await vc.disconnect(force=True)
                     del self.voice_clients[guild_id]
                 elif vc.channel != voice_channel:
-                    # Переподключаемся, если пользователь в другом канале
                     await vc.disconnect(force=True)
                     del self.voice_clients[guild_id]
 
             # Подключаемся, если не подключены
             if guild_id not in self.voice_clients:
-                vc = await voice_channel.connect(reconnect=True, timeout=5.0)  # Уменьшен таймаут
+                vc = await voice_channel.connect(reconnect=True, timeout=3.0)  # Уменьшен таймаут
                 self.voice_clients[guild_id] = vc
                 self.volume[guild_id] = 1.0
                 logger.info(f"Подключено к голосовому каналу {voice_channel.name} за {time.time() - start_time:.2f} секунд")
@@ -125,7 +128,6 @@ class Music(commands.Cog):
             with open(cache_file, "w") as f:
                 json.dump(cache, f)
 
-        # Проверяем кэш
         cached = load_cache(url)
         if cached:
             logger.info(f"Используем кэш для {url}")
@@ -147,7 +149,7 @@ class Music(commands.Cog):
                 )
                 return
 
-        if "entries" in info:  # Если это плейлист
+        if "entries" in info:
             first_track = info["entries"][0]
             ydl_opts_full = {
                 "format": "bestaudio",
@@ -175,7 +177,7 @@ class Music(commands.Cog):
                 )
                 return
             self.queue[guild_id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
-        else:  # Если это одиночное видео
+        else:
             ydl_opts_full = {
                 "format": "bestaudio",
                 "quiet": True,
@@ -202,7 +204,6 @@ class Music(commands.Cog):
                 )
                 return
 
-        # Проверка доступности URL
         async with aiohttp.ClientSession() as session:
             try:
                 async with session.head(source, timeout=5) as response:
@@ -258,7 +259,7 @@ class Music(commands.Cog):
                 voice_channel = self.bot.get_channel(voice_channel_id)
                 if voice_channel:
                     try:
-                        vc = await voice_channel.connect(reconnect=True, timeout=5.0)
+                        vc = await voice_channel.connect(reconnect=True, timeout=3.0)
                         self.voice_clients[guild_id] = vc
                         logger.info(f"Переподключено к голосовому каналу {voice_channel.name}")
                     except Exception as e:
@@ -296,7 +297,6 @@ class Music(commands.Cog):
             self.bot.loop.create_task(self.after_track(guild_id))
             return
 
-        # Проверка доступности URL
         async with aiohttp.ClientSession() as session:
             try:
                 async with session.head(source, timeout=5) as response:
