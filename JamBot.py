@@ -66,3 +66,4 @@ try:
 except Exception as e:
     logger.error(f"Ошибка при запуске бота: {e}")
     raise
+    
