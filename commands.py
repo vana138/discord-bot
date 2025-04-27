@@ -39,25 +39,46 @@ class Music(commands.Cog):
             return
 
         voice_channel = interaction.user.voice.channel
+        guild_id = interaction.guild.id
         try:
-            if interaction.guild.id not in self.voice_clients or not self.voice_clients[interaction.guild.id].is_connected():
-                vc = await voice_channel.connect()
-                self.voice_clients[interaction.guild.id] = vc
-                self.volume[interaction.guild.id] = 1.0
+            # Проверяем, подключён ли бот и действителен ли voice_client
+            if guild_id in self.voice_clients:
+                vc = self.voice_clients[guild_id]
+                if not vc.is_connected():
+                    # Очищаем устаревший voice_client
+                    await vc.disconnect(force=True)
+                    del self.voice_clients[guild_id]
+                elif vc.channel != voice_channel:
+                    # Переподключаемся, если пользователь в другом канале
+                    await vc.disconnect(force=True)
+                    del self.voice_clients[guild_id]
+
+            # Подключаемся, если не подключены
+            if guild_id not in self.voice_clients:
+                vc = await voice_channel.connect(reconnect=True, timeout=10.0)
+                self.voice_clients[guild_id] = vc
+                self.volume[guild_id] = 1.0
                 logger.info(f"Подключено к голосовому каналу {voice_channel.name} за {time.time() - start_time:.2f} секунд")
             else:
-                vc = self.voice_clients[interaction.guild.id]
+                vc = self.voice_clients[guild_id]
+
             if vc.is_playing():
-                self.queue.setdefault(interaction.guild.id, []).append({"url": url, "title": "Неизвестный трек"})
+                self.queue.setdefault(guild_id, []).append({"url": url, "title": "Неизвестный трек"})
                 await interaction.followup.send("Трек добавлен в очередь!")
                 return
             await self.play_track(interaction, url)
         except Exception as e:
-            await interaction.followup.send(f"Ошибка подключения к голосовому каналу: {e}")
+            logger.error(f"Ошибка подключения к голосовому каналу: {e}")
+            await interaction.followup.send(f"Ошибка подключения к голосовому каналу: {str(e)}")
             return
 
     async def play_track(self, interaction, url):
-        vc = self.voice_clients[interaction.guild.id]
+        guild_id = interaction.guild.id
+        vc = self.voice_clients.get(guild_id)
+        if not vc or not vc.is_connected():
+            await interaction.followup.send("Бот не подключен к голосовому каналу!")
+            return
+
         ydl_opts = {
             "format": "bestaudio",
             "noplaylist": False,
@@ -68,8 +89,13 @@ class Music(commands.Cog):
             "max_retries": 3,
             "playlistend": 120,
             "no_warnings": True,
-            "cookiefile": "cookies.txt",  # Добавлено для аутентификации
         }
+        # Проверяем наличие cookies.txt
+        if os.path.exists("cookies.txt"):
+            ydl_opts["cookiefile"] = "cookies.txt"
+        else:
+            logger.warning("Файл cookies.txt не найден. Некоторые видео могут быть недоступны.")
+
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
 
@@ -108,8 +134,8 @@ class Music(commands.Cog):
             except Exception as e:
                 logger.error(f"Ошибка при извлечении данных: {e}")
                 await interaction.followup.send(
-                    "Не удалось загрузить плейлист или трек. Возможно, проблема с сетью, YouTube API или требуется аутентификация. "
-                    "Попробуйте снова или используйте другой URL."
+                    "Не удалось загрузить плейлист или трек. "
+                    "Проверьте URL или добавьте действительный файл cookies.txt для YouTube."
                 )
                 return
 
@@ -122,8 +148,9 @@ class Music(commands.Cog):
                 "retries": 5,
                 "max_retries": 3,
                 "no_warnings": True,
-                "cookiefile": "cookies.txt",  # Добавлено
             }
+            if os.path.exists("cookies.txt"):
+                ydl_opts_full["cookiefile"] = "cookies.txt"
             ydl_full = YoutubeDL(ydl_opts_full)
             func_full = functools.partial(ydl_full.extract_info, first_track["url"], download=False)
             try:
@@ -133,9 +160,13 @@ class Music(commands.Cog):
                 source = first_track_info["url"]
                 title = first_track_info.get("title", "Неизвестный трек")
             except Exception as e:
-                await interaction.followup.send(f"Ошибка при извлечении первого трека: {e}")
+                logger.error(f"Ошибка при извлечении первого трека: {e}")
+                await interaction.followup.send(
+                    "Не удалось загрузить первый трек плейлиста. "
+                    "Проверьте URL или добавьте действительный файл cookies.txt для YouTube."
+                )
                 return
-            self.queue[interaction.guild.id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
+            self.queue[guild_id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
         else:  # Если это одиночное видео
             ydl_opts_full = {
                 "format": "bestaudio",
@@ -144,8 +175,9 @@ class Music(commands.Cog):
                 "retries": 5,
                 "max_retries": 3,
                 "no_warnings": True,
-                "cookiefile": "cookies.txt",  # Добавлено
             }
+            if os.path.exists("cookies.txt"):
+                ydl_opts_full["cookiefile"] = "cookies.txt"
             ydl_full = YoutubeDL(ydl_opts_full)
             func_full = functools.partial(ydl_full.extract_info, url, download=False)
             try:
@@ -155,25 +187,29 @@ class Music(commands.Cog):
                 source = info_full["url"]
                 title = info_full.get("title", "Неизвестный трек")
             except Exception as e:
-                await interaction.followup.send(f"Ошибка при извлечении трека: {e}")
+                logger.error(f"Ошибка при извлечении трека: {e}")
+                await interaction.followup.send(
+                    "Не удалось загрузить трек. "
+                    "Проверьте URL или добавьте действительный файл cookies.txt для YouTube."
+                )
                 return
 
-        self.current_tracks[interaction.guild.id] = title
-        self.current_sources[interaction.guild.id] = source
-        self.loop[interaction.guild.id] = False
+        self.current_tracks[guild_id] = title
+        self.current_sources[guild_id] = source
+        self.loop[guild_id] = False
 
         ffmpeg_options = {
             'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -bufsize 128k',
             'options': '-vn'
         }
-        vol = self.volume.get(interaction.guild.id, 1.0)
+        vol = self.volume.get(guild_id, 1.0)
         audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
-        vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(interaction.guild.id)))
+        vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(guild_id)))
         await interaction.followup.send(f"Играет сейчас: **{title}**")
 
     async def after_track(self, guild_id):
         vc = self.voice_clients.get(guild_id)
-        if vc is None:
+        if vc is None or not vc.is_connected():
             return
         if self.loop.get(guild_id, False):
             source = self.current_sources.get(guild_id)
@@ -189,7 +225,7 @@ class Music(commands.Cog):
 
     async def play_track_from_url(self, guild_id, url):
         vc = self.voice_clients.get(guild_id)
-        if not vc:
+        if not vc or not vc.is_connected():
             return
         ydl_opts = {
             "format": "bestaudio",
@@ -198,8 +234,9 @@ class Music(commands.Cog):
             "retries": 5,
             "max_retries": 3,
             "no_warnings": True,
-            "cookiefile": "cookies.txt",  # Добавлено
         }
+        if os.path.exists("cookies.txt"):
+            ydl_opts["cookiefile"] = "cookies.txt"
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
         func = functools.partial(ydl.extract_info, url, download=False)
@@ -261,7 +298,7 @@ class Music(commands.Cog):
     async def stop(self, interaction: discord.Interaction):
         if interaction.guild.id in self.voice_clients:
             vc = self.voice_clients[interaction.guild.id]
-            await vc.disconnect()
+            await vc.disconnect(force=True)
             del self.voice_clients[interaction.guild.id]
             self.current_tracks.pop(interaction.guild.id, None)
             self.current_sources.pop(interaction.guild.id, None)
