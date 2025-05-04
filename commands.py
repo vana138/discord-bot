@@ -10,10 +10,6 @@ import os
 import time
 import shutil
 import aiohttp
-import random
-from lyricsgenius import Genius
-import spotipy
-from spotipy.oauth2 import SpotifyClientCredentials
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -33,51 +29,8 @@ class Music(commands.Cog):
         self.loop_queue = {}            # повтор всей очереди (bool) по guild_id
         self.volume = {}                # уровень громкости (float, 1.0 по умолчанию) по guild_id
         self.voice_channel_ids = {}     # ID голосового канала по guild_id
-        self.autoplay = {}              # автоподбор похожих треков (bool) по guild_id
 
-    async def resolve_spotify_track(self, track):
-        """Ищет трек Spotify на YouTube."""
-        query = f"{track['name']} {track['artists'][0]['name']}"
-        ydl_opts = {
-            "format": "bestaudio",
-            "quiet": True,
-            "default_search": "ytsearch1",
-            "no_warnings": True,
-        }
-        if os.path.exists("cookies.txt"):
-            ydl_opts["cookiefile"] = "cookies.txt"]
-        ydl = YoutubeDL(ydl_opts)
-        loop = asyncio.get_event_loop()
-        func = functools.partial(ydl.extract_info, query, download=False)
-        try:
-            info = await loop.run_in_executor(None, func)
-            return {"url": info["entries"][0]["url"], "title": info["entries"][0]["title"]}
-        except Exception as e:
-            logger.error(f"Ошибка поиска трека Spotify на YouTube: {e}")
-            return None
-
-    async def resolve_yandex_track(self, track_title, artist):
-        """Ищет трек Яндекс Музыки на YouTube."""
-        query = f"{track_title} {artist}"
-        ydl_opts = {
-            "format": "bestaudio",
-            "quiet": True,
-            "default_search": "ytsearch1",
-            "no_warnings": True,
-        }
-        if os.path.exists("cookies.txt"):
-            ydl_opts["cookiefile"] = "cookies.txt"]
-        ydl = YoutubeDL(ydl_opts)
-        loop = asyncio.get_event_loop()
-        func = functools.partial(ydl.extract_info, query, download=False)
-        try:
-            info = await loop.run_in_executor(None, func)
-            return {"url": info["entries"][0]["url"], "title": info["entries"][0]["title"]}
-        except Exception as e:
-            logger.error(f"Ошибка поиска трека Яндекс Музыки на YouTube: {e}")
-            return None
-
-    @app_commands.command(name="play", description="Воспроизводит музыку из указанного URL (YouTube, Rutube, Spotify, Яндекс Музыка)")
+    @app_commands.command(name="play", description="Воспроизводит музыку из указанного URL")
     async def play(self, interaction: discord.Interaction, url: str):
         defer_start = time.time()
         try:
@@ -147,7 +100,10 @@ class Music(commands.Cog):
             "no_warnings": True,
         }
         if os.path.exists("cookies.txt"):
-            ydl_opts["cookiefile"] = "cookies.txt"]
+            ydl_opts["cookiefile"] = "cookies.txt"
+        else:
+            logger.warning("Файл cookies.txt не найден. Некоторые видео могут быть недоступны.")
+
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
 
@@ -169,124 +125,81 @@ class Music(commands.Cog):
             with open(cache_file, "w") as f:
                 json.dump(cache, f)
 
-        # Обработка Spotify
-        if "spotify.com" in url:
-            try:
-                sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-                    client_id=os.getenv("SPOTIFY_CLIENT_ID"),
-                    client_secret=os.getenv("SPOTIFY_CLIENT_SECRET")
-                ))
-                playlist_id = url.split("/")[-1].split("?")[0]
-                results = sp.playlist_items(playlist_id)
-                tracks = results["items"]
-                if not tracks:
-                    await interaction.followup.send("Не удалось загрузить плейлист Spotify.")
-                    return
-                first_track = tracks[0]["track"]
-                resolved_track = await self.resolve_spotify_track(first_track)
-                if not resolved_track:
-                    await interaction.followup.send("Не удалось найти первый трек Spotify на YouTube.")
-                    return
-                source = resolved_track["url"]
-                title = resolved_track["title"]
-                self.queue[guild_id] = [await self.resolve_spotify_track(track["track"]) for track in tracks[1:] if await self.resolve_spotify_track(track["track"])]
-            except Exception as e:
-                logger.error(f"Ошибка обработки Spotify: {e}")
-                await interaction.followup.send("Ошибка при загрузке плейлиста Spotify. Убедитесь, что URL корректен.")
-                return
-        # Обработка Яндекс Музыки
-        elif "music.yandex" in url:
-            try:
-                func = functools.partial(ydl.extract_info, url, download=False)
-                info = await loop.run_in_executor(None, func)
-                if "entries" not in info:
-                    await interaction.followup.send("Не удалось загрузить плейлист Яндекс Музыки.")
-                    return
-                first_track = info["entries"][0]
-                source = first_track["url"]
-                title = first_track.get("title", "Неизвестный трек")
-                self.queue[guild_id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
-            except Exception as e:
-                logger.error(f"Ошибка обработки Яндекс Музыки: {e}")
-                await interaction.followup.send("Ошибка при загрузке плейлиста Яндекс Музыки. Убедитесь, что URL корректен.")
-                return
-        # Обработка Rutube и YouTube
+        cached = load_cache(url)
+        if cached:
+            logger.info(f"Используем кэш для {url}")
+            info = cached
         else:
-            cached = load_cache(url)
-            if cached:
-                logger.info(f"Используем кэш для {url}")
-                info = cached
-            else:
-                func = functools.partial(ydl.extract_info, url, download=False)
-                try:
-                    logger.info(f"Начинаем извлечение данных для URL: {url}")
-                    start_time = time.time()
-                    info = await loop.run_in_executor(None, func)
-                    logger.info(f"Данные извлечены за {time.time() - start_time:.2f} секунд")
-                    if "entries" in info:
-                        save_cache(url, info)
-                except Exception as e:
-                    logger.error(f"Ошибка при извлечении данных: {e}")
-                    error_msg = "Не удалось загрузить плейлист или трек. Проверьте URL."
-                    if "Sign in to confirm you’re not a bot" in str(e):
-                        error_msg += " Для доступа к некоторым видео нужен файл cookies.txt. См. инструкции: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
-                    await interaction.followup.send(error_msg)
-                    return
+            func = functools.partial(ydl.extract_info, url, download=False)
+            try:
+                logger.info(f"Начинаем извлечение данных для URL: {url}")
+                start_time = time.time()
+                info = await loop.run_in_executor(None, func)
+                logger.info(f"Данные извлечены за {time.time() - start_time:.2f} секунд")
+                if "entries" in info:
+                    save_cache(url, info)
+            except Exception as e:
+                logger.error(f"Ошибка при извлечении данных: {e}")
+                error_msg = "Не удалось загрузить плейлист или трек. Проверьте URL."
+                if "Sign in to confirm you’re not a bot" in str(e):
+                    error_msg += " Для доступа к некоторым видео нужен файл cookies.txt. См. инструкции: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
+                await interaction.followup.send(error_msg)
+                return
 
-            if "entries" in info:
-                first_track = info["entries"][0]
-                ydl_opts_full = {
-                    "format": "bestaudio",
-                    "quiet": True,
-                    "socket_timeout": 15,
-                    "retries": 5,
-                    "max_retries": 3,
-                    "no_warnings": True,
-                }
-                if os.path.exists("cookies.txt"):
-                    ydl_opts_full["cookiefile"] = "cookies.txt"]
-                ydl_full = YoutubeDL(ydl_opts_full)
-                func_full = functools.partial(ydl_full.extract_info, first_track["url"], download=False)
-                try:
-                    start_time = time.time()
-                    first_track_info = await loop.run_in_executor(None, func_full)
-                    logger.info(f"Первый трек извлечён за {time.time() - start_time:.2f} секунд")
-                    source = first_track_info["url"]
-                    title = first_track_info.get("title", "Неизвестный трек")
-                except Exception as e:
-                    logger.error(f"Ошибка при извлечении первого трека: {e}")
-                    error_msg = "Не удалось загрузить первый трек плейлиста. Проверьте URL."
-                    if "Sign in to confirm you’re not a bot" in str(e):
-                        error_msg += " Для доступа к некоторым видео нужен файл cookies.txt. См. инструкции: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
-                    await interaction.followup.send(error_msg)
-                    return
-                self.queue[guild_id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
-            else:
-                ydl_opts_full = {
-                    "format": "bestaudio",
-                    "quiet": True,
-                    "socket_timeout": 15,
-                    "retries": 5,
-                    "max_retries": 3,
-                    "no_warnings": True,
-                }
-                if os.path.exists("cookies.txt"):
-                    ydl_opts_full["cookiefile"] = "cookies.txt"]
-                ydl_full = YoutubeDL(ydl_opts_full)
-                func_full = functools.partial(ydl_full.extract_info, url, download=False)
-                try:
-                    start_time = time.time()
-                    info_full = await loop.run_in_executor(None, func_full)
-                    logger.info(f"Одиночный трек извлечён за {time.time() - start_time:.2f} секунд")
-                    source = info_full["url"]
-                    title = info_full.get("title", "Неизвестный трек")
-                except Exception as e:
-                    logger.error(f"Ошибка при извлечении трека: {e}")
-                    error_msg = "Не удалось загрузить трек. Проверьте URL."
-                    if "Sign in to confirm you’re not a bot" in str(e):
-                        error_msg += " Для доступа к некоторым видео нужен файл cookies.txt. См. инструкции: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
-                    await interaction.followup.send(error_msg)
-                    return
+        if "entries" in info:
+            first_track = info["entries"][0]
+            ydl_opts_full = {
+                "format": "bestaudio",
+                "quiet": True,
+                "socket_timeout": 15,
+                "retries": 5,
+                "max_retries": 3,
+                "no_warnings": True,
+            }
+            if os.path.exists("cookies.txt"):
+                ydl_opts_full["cookiefile"] = "cookies.txt"
+            ydl_full = YoutubeDL(ydl_opts_full)
+            func_full = functools.partial(ydl_full.extract_info, first_track["url"], download=False)
+            try:
+                start_time = time.time()
+                first_track_info = await loop.run_in_executor(None, func_full)
+                logger.info(f"Первый трек извлечён за {time.time() - start_time:.2f} секунд")
+                source = first_track_info["url"]
+                title = first_track_info.get("title", "Неизвестный трек")
+            except Exception as e:
+                logger.error(f"Ошибка при извлечении первого трека: {e}")
+                error_msg = "Не удалось загрузить первый трек плейлиста. Проверьте URL."
+                if "Sign in to confirm you’re not a bot" in str(e):
+                    error_msg += " Для доступа к некоторым видео нужен файл cookies.txt. См. инструкции: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
+                await interaction.followup.send(error_msg)
+                return
+            self.queue[guild_id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
+        else:
+            ydl_opts_full = {
+                "format": "bestaudio",
+                "quiet": True,
+                "socket_timeout": 15,
+                "retries": 5,
+                "max_retries": 3,
+                "no_warnings": True,
+            }
+            if os.path.exists("cookies.txt"):
+                ydl_opts_full["cookiefile"] = "cookies.txt"
+            ydl_full = YoutubeDL(ydl_opts_full)
+            func_full = functools.partial(ydl_full.extract_info, url, download=False)
+            try:
+                start_time = time.time()
+                info_full = await loop.run_in_executor(None, func_full)
+                logger.info(f"Одиночный трек извлечён за {time.time() - start_time:.2f} секунд")
+                source = info_full["url"]
+                title = info_full.get("title", "Неизвестный трек")
+            except Exception as e:
+                logger.error(f"Ошибка при извлечении трека: {e}")
+                error_msg = "Не удалось загрузить трек. Проверьте URL."
+                if "Sign in to confirm you’re not a bot" in str(e):
+                    error_msg += " Для доступа к некоторым видео нужен файл cookies.txt. См. инструкции: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
+                await interaction.followup.send(error_msg)
+                return
 
         async with aiohttp.ClientSession() as session:
             try:
@@ -330,25 +243,6 @@ class Music(commands.Cog):
         elif self.queue.get(guild_id) and len(self.queue[guild_id]) > 0:
             next_track = self.queue[guild_id].pop(0)
             self.bot.loop.create_task(self.play_track_from_url(guild_id, next_track["url"]))
-        elif self.autoplay.get(guild_id, False):
-            query = self.current_tracks.get(guild_id, "")
-            ydl_opts = {
-                "format": "bestaudio",
-                "quiet": True,
-                "default_search": "ytsearch1",
-                "no_warnings": True,
-            }
-            if os.path.exists("cookies.txt"):
-                ydl_opts["cookiefile"] = "cookies.txt"]
-            ydl = YoutubeDL(ydl_opts)
-            loop = asyncio.get_event_loop()
-            func = functools.partial(ydl.extract_info, query, download=False)
-            try:
-                info = await loop.run_in_executor(None, func)
-                if "entries" in info and info["entries"]:
-                    self.bot.loop.create_task(self.play_track_from_url(guild_id, info["entries"][0]["url"]))
-            except Exception as e:
-                logger.error(f"Ошибка автоподбора: {e}")
         elif self.loop_queue.get(guild_id, False) and self.queue.get(guild_id):
             if len(self.queue[guild_id]) > 0:
                 first_url = self.queue[guild_id][0]["url"]
@@ -385,7 +279,7 @@ class Music(commands.Cog):
             "no_warnings": True,
         }
         if os.path.exists("cookies.txt"):
-            ydl_opts["cookiefile"] = "cookies.txt"]
+            ydl_opts["cookiefile"] = "cookies.txt"
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
         func = functools.partial(ydl.extract_info, url, download=False)
@@ -565,44 +459,6 @@ class Music(commands.Cog):
         guild_id = interaction.guild.id
         self.queue[guild_id] = []
         await interaction.response.send_message("Очередь очищена.")
-
-    @app_commands.command(name="shuffle", description="Перемешивает треки в очереди")
-    async def shuffle(self, interaction: discord.Interaction):
-        guild_id = interaction.guild.id
-        if guild_id in self.queue and self.queue[guild_id]:
-            random.shuffle(self.queue[guild_id])
-            await interaction.response.send_message("Очередь треков перемешана!")
-        else:
-            await interaction.response.send_message("Очередь пуста, нечего перемешивать.")[](https://support.spotify.com/co-en/article/shuffle-play/)
-
-    @app_commands.command(name="lyrics", description="Показывает текст текущей песни или по запросу")
-    async def lyrics(self, interaction: discord.Interaction, query: str = None):
-        await interaction.response.defer(thinking=True)
-        genius = Genius(os.getenv("GENIUS_TOKEN"))
-        guild_id = interaction.guild.id
-        try:
-            if query:
-                song = genius.search_song(query)
-            else:
-                if guild_id not in self.current_tracks or not self.current_tracks[guild_id]:
-                    await interaction.followup.send("Сейчас ничего не играет, укажите название песни.")
-                    return
-                song = genius.search_song(self.current_tracks[guild_id])
-            if song and song.lyrics:
-                lyrics = song.lyrics[:2000]  # Ограничение Discord
-                await interaction.followup.send(f"Текст песни **{song.title}**:\n{lyrics}")
-            else:
-                await interaction.followup.send("Текст песни не найден.")
-        except Exception as e:
-            logger.error(f"Ошибка получения текста: {e}")
-            await interaction.followup.send("Произошла ошибка при поиске текста песни.")
-
-    @app_commands.command(name="autoplay", description="Включает/выключает автоматическое воспроизведение похожих треков")
-    async def autoplay(self, interaction: discord.Interaction):
-        guild_id = interaction.guild.id
-        self.autoplay[guild_id] = not self.autoplay.get(guild_id, False)
-        status = "включен" if self.autoplay[guild_id] else "выключен"
-        await interaction.response.send_message(f"Режим автоподбора {status}.")[](https://support.spotify.com/uk/article/autoplay/)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Music(bot))
