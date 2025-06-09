@@ -434,9 +434,9 @@ class Music(commands.Cog):
     @app_commands.command(name="unqueue", description="Удаляет трек из очереди по номеру")
     async def unqueue(self, interaction: discord.Interaction, index: int):
         guild_id = interaction.guild.id
-        if guild_id in self.queue and 0 <= index - 1 < len(self.queue):
+        if guild_id in self.queue and 0 <= index - 1 < len(self.queue[guild_id]):
             removed_track = self.queue[guild_id].pop(index - 1)
-            await interaction.response.send_message(f"Удалён трек: {removed_track['title']}")
+            await interaction.response.send_message(f"Удален трек: {removed_track['title']}")
         else:
             await interaction.response.send_message("Неверный индекс или очередь пуста.")
 
@@ -459,7 +459,7 @@ class Music(commands.Cog):
     async def loopqueue(self, interaction: discord.Interaction):
         guild_id = interaction.guild.id
         self.loop_queue[guild_id] = not self.loop_queue.get(guild_id, False)
-        status = "включён" if self.loop_queue[guild_id] else "выключен"
+        status = "включен" if self.loop_queue[guild_id] else "выключен"
         await interaction.response.send_message(f"Режим повтора очереди {status}.")
 
     @app_commands.command(name="clearqueue", description="Очищает очередь треков")
@@ -469,7 +469,6 @@ class Music(commands.Cog):
         await interaction.response.send_message("Очередь очищена.")
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(Music(bot))
-    print("Команды зарегистрированы и готовы к использованию.")
-    await bot.add_cog(Music(bot))
-    print("Команды зарегистрированы и готовы к использованию.")
+    if not bot.get_cog("Music"):  # Проверка, не загружен ли уже Cog
+        await bot.add_cog(Music(bot))
+        print("Команды зарегистрированы и готовы к использованию.")
