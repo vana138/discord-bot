@@ -20,13 +20,16 @@ intents.message_content = True
 class JamBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="/", intents=intents, application_id="1330922461973450813")
+        self.cog_loaded = False  # Флаг для отслеживания загрузки Cog
         logger.info("Инициализация бота")
 
     async def setup_hook(self):
         try:
-            from commands import setup
-            await setup(self)
-            logger.info("Команды успешно загружены")
+            if not self.cog_loaded:
+                from commands import setup
+                await setup(self)
+                self.cog_loaded = True
+                logger.info("Команды успешно загружены")
         except Exception as e:
             logger.error(f"Ошибка в setup_hook: {e}")
             raise
@@ -50,22 +53,26 @@ class DummyServer(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Bot is running")
 
+    def do_HEAD(self):  # Добавляем поддержку HEAD-запросов
+        self.send_response(200)
+        self.end_headers()
+
 def run_server():
     port = int(os.getenv("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), DummyServer)
     logger.info(f"Запуск HTTP-сервера на порту {port}")
     server.serve_forever()
 
-try:
-    threading.Thread(target=run_server, daemon=True).start()
-    bot = JamBot()
-    TOKEN = os.getenv("DISCORD_TOKEN")
-    if not TOKEN:
-        logger.error("DISCORD_TOKEN не установлен в переменных окружения!")
-        raise ValueError("DISCORD_TOKEN не установлен")
-    logger.info("Запуск бота")
-    bot.run(TOKEN)
-except Exception as e:
-    logger.error(f"Ошибка при запуске бота: {e}")
-    raise
-    
+if __name__ == "__main__":  # Защита от повторного запуска
+    try:
+        threading.Thread(target=run_server, daemon=True).start()
+        bot = JamBot()
+        TOKEN = os.getenv("DISCORD_TOKEN")
+        if not TOKEN:
+            logger.error("DISCORD_TOKEN не установлен в переменных окружения!")
+            raise ValueError("DISCORD_TOKEN не установлен")
+        logger.info("Запуск бота")
+        bot.run(TOKEN)
+    except Exception as e:
+        logger.error(f"Ошибка при запуске бота: {e}")
+        raise
