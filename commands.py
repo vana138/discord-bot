@@ -91,7 +91,7 @@ class Music(commands.Cog):
             return
 
         ydl_opts = {
-            "format": "bestaudio",
+            "format": "bestaudio/best",  # Изменено для большей гибкости
             "noplaylist": False,
             "quiet": True,
             "socket_timeout": 15,
@@ -145,13 +145,15 @@ class Music(commands.Cog):
                 error_msg = "Не удалось загрузить плейлист или трек. Проверьте URL."
                 if "Sign in to confirm you’re not a bot" in str(e):
                     error_msg += " Для доступа к некоторым видео нужен файл cookies.txt. См. инструкции: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
+                elif "Requested format is not available" in str(e):
+                    error_msg += " Запрошенный формат недоступен. Попробуйте другое видео или обновите cookies.txt."
                 await interaction.followup.send(error_msg)
                 return
 
         if "entries" in info:
             first_track = info["entries"][0]
             ydl_opts_full = {
-                "format": "bestaudio",
+                "format": "bestaudio/best",  # Изменено для большей гибкости
                 "quiet": True,
                 "socket_timeout": 15,
                 "retries": 5,
@@ -173,12 +175,14 @@ class Music(commands.Cog):
                 error_msg = "Не удалось загрузить первый трек плейлиста. Проверьте URL."
                 if "Sign in to confirm you’re not a bot" in str(e):
                     error_msg += " Для доступа к некоторым видео нужен файл cookies.txt. См. инструкции: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
+                elif "Requested format is not available" in str(e):
+                    error_msg += " Запрошенный формат недоступен. Попробуйте другое видео или обновите cookies.txt."
                 await interaction.followup.send(error_msg)
                 return
             self.queue[guild_id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
         else:
             ydl_opts_full = {
-                "format": "bestaudio",
+                "format": "bestaudio/best",  # Изменено для большей гибкости
                 "quiet": True,
                 "socket_timeout": 15,
                 "retries": 5,
@@ -200,6 +204,8 @@ class Music(commands.Cog):
                 error_msg = "Не удалось загрузить трек. Проверьте URL."
                 if "Sign in to confirm you’re not a bot" in str(e):
                     error_msg += " Для доступа к некоторым видео нужен файл cookies.txt. См. инструкции: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
+                elif "Requested format is not available" in str(e):
+                    error_msg += " Запрошенный формат недоступен. Попробуйте другое видео или обновите cookies.txt."
                 await interaction.followup.send(error_msg)
                 return
 
@@ -273,7 +279,7 @@ class Music(commands.Cog):
 
         logger.info(f"Попытка воспроизвести трек для guild_id {guild_id}, URL: {url}")
         ydl_opts = {
-            "format": "bestaudio",
+            "format": "bestaudio/best",  # Изменено для большей гибкости
             "quiet": True,
             "socket_timeout": 15,
             "retries": 5,
@@ -428,9 +434,9 @@ class Music(commands.Cog):
     @app_commands.command(name="unqueue", description="Удаляет трек из очереди по номеру")
     async def unqueue(self, interaction: discord.Interaction, index: int):
         guild_id = interaction.guild.id
-        if guild_id in self.queue and 0 <= index - 1 < len(self.queue[guild_id]):
+        if guild_id in self.queue and 0 <= index - 1 < len(self.queue):
             removed_track = self.queue[guild_id].pop(index - 1)
-            await interaction.response.send_message(f"Удален трек: {removed_track['title']}")
+            await interaction.response.send_message(f"Удалён трек: {removed_track['title']}")
         else:
             await interaction.response.send_message("Неверный индекс или очередь пуста.")
 
@@ -453,7 +459,7 @@ class Music(commands.Cog):
     async def loopqueue(self, interaction: discord.Interaction):
         guild_id = interaction.guild.id
         self.loop_queue[guild_id] = not self.loop_queue.get(guild_id, False)
-        status = "включен" if self.loop_queue[guild_id] else "выключен"
+        status = "включён" if self.loop_queue[guild_id] else "выключен"
         await interaction.response.send_message(f"Режим повтора очереди {status}.")
 
     @app_commands.command(name="clearqueue", description="Очищает очередь треков")
@@ -463,5 +469,7 @@ class Music(commands.Cog):
         await interaction.response.send_message("Очередь очищена.")
 
 async def setup(bot: commands.Bot):
+    await bot.add_cog(Music(bot))
+    print("Команды зарегистрированы и готовы к использованию.")
     await bot.add_cog(Music(bot))
     print("Команды зарегистрированы и готовы к использованию.")
