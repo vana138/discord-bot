@@ -64,10 +64,10 @@ class Music(commands.Cog):
             "max_retries": 3,
             "playlistend": 120,
             "no_warnings": True,
-            "force_generic": True,
+            "force_generic_extractor": True,
             "user_agent": random.choice(USER_AGENTS),
             "default_search": "ytsearch",
-            "no_check_certificate": False,
+            "no_check_certificate": True,
         }
         proxy = os.getenv("HTTP_PROXY")
         if proxy:
@@ -126,7 +126,7 @@ class Music(commands.Cog):
         defer_start = time.time()
         try:
             await interaction.response.defer(thinking=True)
-            logger.info(f"Defer выполнен за {time.time() - defer_start:.1f} секунд")
+            logger.info(f"Defer выполнен за {time.time() - defer_start:.2f} секунд")
         except Exception as e:
             logger.error(f"Ошибка при defer: {e}")
             return
@@ -147,7 +147,6 @@ class Music(commands.Cog):
         # Проверка через YouTube API
         title = "Неизвестный трек"
         is_playable = True
-        requires_auth = False
         if video_id and self.youtube:
             video_info = await self.check_video_access(video_id)
             if video_info:
@@ -156,7 +155,6 @@ class Music(commands.Cog):
                         await interaction.followup.send("Превышена лимита YouTube API. Попробуйте позже.")
                         return
                     elif video_info["error"] == "Access restricted":
-                        requires_auth = video_info.get("requires_auth", False)
                         await interaction.followup.send("Видео требует входа в аккаунт YouTube. Попробуйте общедоступное видео.")
                         return
                 else:
@@ -176,14 +174,14 @@ class Music(commands.Cog):
                     await vc.disconnect(force=True)
                     del self.voice_clients[guild_id]
                 elif vc.channel != voice_channel:
-                    await vc.disconnect()
+                    await vc.disconnect(force=True)
                     del self.voice_clients[guild_id]
 
             if guild_id not in self.voice_clients:
                 vc = await voice_channel.connect(reconnect=True, timeout=5.0)
                 self.voice_clients[guild_id] = vc
                 self.volume[guild_id] = 1.0
-                logger.info(f"Подключено к голосовому каналу {voice_channel.name} за {time.time() - start_time:.1f} секунд")
+                logger.info(f"Подключено к голосовому каналу {voice_channel.name} за {time.time() - start_time:.2f} секунд")
             else:
                 vc = self.voice_clients[guild_id]
 
@@ -235,7 +233,7 @@ class Music(commands.Cog):
                 start_time = time.time()
                 func = functools.partial(ydl.extract_info, url, download=False)
                 info = await loop.run_in_executor(None, func)
-                logger.info(f"Данные извлечены за {time.time() - start_time:.1f} секунд")
+                logger.info(f"Данные извлечены за {time.time() - start_time:.2f} секунд")
                 if "entries" in info:
                     save_cache(url, info)
             except Exception as e:
@@ -257,9 +255,9 @@ class Music(commands.Cog):
                 start_time = time.time()
                 func_full = functools.partial(ydl_full.extract_info, first_track["url"], download=False)
                 first_track_info = await loop.run_in_executor(None, func_full)
-                logger.info(f"Первый трек извлечён за {time.time() - start_time:.1f} секунд")
+                logger.info(f"Первый трек извлечён за {time.time() - start_time:.2f} секунд")
                 source = first_track_info["url"]
-                title = first_track_info.get("title", title)  # Use API title if available
+                title = first_track_info.get("title", title)  # Используем API title, если доступен
             except Exception as e:
                 logger.error(f"Ошибка при извлечении первого трека: {e}")
                 error_msg = "Не удалось загрузить первый трек плейлиста."
@@ -278,7 +276,7 @@ class Music(commands.Cog):
                 start_time = time.time()
                 func_full = functools.partial(ydl_full.extract_info, url, download=False)
                 info_full = await loop.run_in_executor(None, func_full)
-                logger.info(f"Одиночный трек извлечён за {info_full.get('title')} за {time.time() - start_time:.1f} секунд")
+                logger.info(f"Одиночный трек извлечён за {time.time() - start_time:.2f} секунд")
                 source = info_full["url"]
                 title = info_full.get("title", title)
             except Exception as e:
@@ -291,7 +289,7 @@ class Music(commands.Cog):
                 await interaction.followup.send(error_msg)
                 return
 
-        async with aiohttp.ClientSession() as client:
+        async with aiohttp.ClientSession() as session:
             try:
                 async with session.head(source, timeout=5) as response:
                     if response.status != 200:
@@ -368,7 +366,7 @@ class Music(commands.Cog):
             start_time = time.time()
             func = functools.partial(ydl.extract_info, url, download=False)
             info = await loop.run_in_executor(None, func)
-            logger.info(f"Трек извлечён за {time.time() - start_time:.1f} секунд")
+            logger.info(f"Трек извлечён за {time.time() - start_time:.2f} секунд")
             source = info["url"]
             title = info.get("title", "Неизвестный трек")
         except Exception as e:
@@ -542,10 +540,3 @@ class Music(commands.Cog):
         guild_id = interaction.guild.id
         self.queue[guild_id] = []
         await interaction.response.send_message("Очередь очищена.")
-
-async def setup(bot: commands.Bot):
-    if not bot.get_cog("Music"):
-        await bot.add_cog(Music(bot))
-        logger.info("Команды зарегистрированы и готовы к использованию.")
-        await bot.add_cog(Music(bot))
-        logger.info("Команды зарегистрированы и готовы к использованию.")
