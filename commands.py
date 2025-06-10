@@ -562,3 +562,8 @@ class Music(commands.Cog):
         guild_id = interaction.guild.id
         self.queue[guild_id] = []
         await interaction.response.send_message("Очередь очищена.")
+
+# Функция setup для регистрации Cog
+async def setup(bot):
+    await bot.add_cog(Music(bot))
+    logger.info("Cog 'Music' зарегистрирован")
