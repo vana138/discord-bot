@@ -46,7 +46,6 @@ class Music(commands.Cog):
         self.volume = {}
         self.voice_channel_ids = {}
         self.youtube = None
-        self.cookies_path = os.path.join("config", "cookies.txt")
         
         # Настройка OAuth для YouTube API
         scopes = ["https://www.googleapis.com/auth/youtube.readonly"]
@@ -63,7 +62,6 @@ class Music(commands.Cog):
                 flow = InstalledAppFlow.from_client_secrets_file(
                     "client_secret.json", scopes=scopes
                 )
-                # Для локального тестирования, для Render нужно загрузить token.json
                 credentials = flow.run_local_server(port=8080)
             with open(token_path, "w") as token_file:
                 token_file.write(credentials.to_json())
@@ -73,11 +71,12 @@ class Music(commands.Cog):
             logger.info("YouTube API инициализирован через OAuth")
         else:
             logger.warning("Не удалось инициализировать YouTube API через OAuth")
-        
-        if not os.path.exists(self.cookies_path):
-            logger.warning(f"Файл cookies не найден по пути {self.cookies_path}")
 
-    def get_ydl_opts(self):
+    def get_ydl_opts(self, use_web_embedded=False):
+        proxy = os.getenv("HTTP_PROXY")
+        if not proxy:
+            raise ValueError("Переменная окружения HTTP_PROXY не установлена. Настройте прокси на Render.com.")
+        
         ydl_opts = {
             "format": "bestaudio/best",
             "noplaylist": False,
@@ -92,14 +91,12 @@ class Music(commands.Cog):
             "user_agent": random.choice(USER_AGENTS),
             "default_search": "ytsearch",
             "no_check_certificate": True,
+            "proxy": proxy
         }
-        proxy = os.getenv("HTTP_PROXY")
-        if proxy:
-            ydl_opts["proxy"] = proxy
-            logger.info(f"Используется прокси: {proxy}")
-        if os.path.exists(self.cookies_path):
-            ydl_opts["cookies"] = self.cookies_path
-            logger.info(f"Используются cookies из {self.cookies_path}")
+        logger.info(f"Используется прокси: {proxy}")
+        
+        if use_web_embedded:
+            ydl_opts["extractor_args"] = {"youtube": {"player_client": "web_embedded"}}
         return ydl_opts
 
     async def check_video_access(self, video_id):
@@ -177,13 +174,13 @@ class Music(commands.Cog):
                         await interaction.followup.send("Превышена квота YouTube API. Попробуйте позже.")
                         return
                     elif video_info["error"] == "Access restricted":
-                        await interaction.followup.send("Видео требует входа в аккаунт YouTube. Убедитесь, что cookies настроены.")
+                        await interaction.followup.send("Видео недоступно без аутентификации. Попробуйте другое видео.")
                         return
                 else:
                     title = video_info["title"]
                     is_playable = video_info["is_playable"]
                     if not is_playable:
-                        await interaction.followup.send("Видео не поддерживает воспроизведение.")
+                        await interaction.followup.send("Видео не поддерживает встраивание и воспроизведение.")
                         return
 
         voice_channel = interaction.user.voice.channel
@@ -223,34 +220,46 @@ class Music(commands.Cog):
             await interaction.followup.send("Бот не подключен к голосовому каналу!")
             return
 
-        ydl_opts = self.get_ydl_opts()
-        ydl = YoutubeDL(ydl_opts)
-        loop = asyncio.get_event_loop()
+        video_id = None
+        if "youtu.be" in url or "youtube.com" in url:
+            match = re.search(r"(?:v=|youtu\.be\/)([\w\-_]+)", url)
+            if match:
+                video_id = match.group(1)
 
-        def load_cache(playlist_url):
-            cache_file = "playlist_cache.json"
-            if os.path.exists(cache_file):
-                with open(cache_file, "r", encoding="utf-8") as f:
-                    cache = json.load(f)
-                return cache.get(playlist_url, None)
-            return None
+        is_embeddable = False
+        if video_id and self.youtube:
+            video_info = await self.check_video_access(video_id)
+            if video_info and "is_playable" in video_info:
+                is_embeddable = video_info["is_playable"]
 
-        def save_cache(playlist_url, tracks):
-            cache_file = "playlist_cache.json"
-            cache = {}
-            if os.path.exists(cache_file):
-                with open(cache_file, "r", encoding="utf-8") as f:
-                    cache = json.load(f)
-            cache[playlist_url] = tracks
-            with open(cache_file, "w", encoding="utf-8") as f:
-                json.dump(cache, f, ensure_ascii=False, indent=2)
+        try:
+            ydl_opts = self.get_ydl_opts(use_web_embedded=is_embeddable)
+            ydl = YoutubeDL(ydl_opts)
+            loop = asyncio.get_event_loop()
 
-        cached = load_cache(url)
-        if cached:
-            logger.info(f"Используем кэш для {url}")
-            info = cached
-        else:
-            try:
+            def load_cache(playlist_url):
+                cache_file = "playlist_cache.json"
+                if os.path.exists(cache_file):
+                    with open(cache_file, "r", encoding="utf-8") as f:
+                        cache = json.load(f)
+                    return cache.get(playlist_url, None)
+                return None
+
+            def save_cache(playlist_url, tracks):
+                cache_file = "playlist_cache.json"
+                cache = {}
+                if os.path.exists(cache_file):
+                    with open(cache_file, "r", encoding="utf-8") as f:
+                        cache = json.load(f)
+                cache[playlist_url] = tracks
+                with open(cache_file, "w", encoding="utf-8") as f:
+                    json.dump(cache, f, ensure_ascii=False, indent=2)
+
+            cached = load_cache(url)
+            if cached:
+                logger.info(f"Используем кэш для {url}")
+                info = cached
+            else:
                 logger.info(f"Начинаем извлечение данных для URL: {url}")
                 start_time = time.time()
                 func = functools.partial(ydl.extract_info, url, download=False)
@@ -258,88 +267,58 @@ class Music(commands.Cog):
                 logger.info(f"Данные извлечены за {time.time() - start_time:.2f} секунд")
                 if "entries" in info:
                     save_cache(url, info)
-            except Exception as e:
-                logger.error(f"Ошибка при извлечении данных: {e}")
-                error_msg = "Не удалось загрузить видео или плейлист. Проверьте URL."
-                if "Sign in to confirm you’re not a bot" in str(e):
-                    error_msg = "Видео требует входа в аккаунт YouTube. Убедитесь, что файл cookies.txt настроен."
-                elif "Requested format is not available" in str(e):
-                    error_msg += " Запрошенный формат недоступен."
-                await interaction.followup.send(error_msg)
-                return
 
-        if "entries" in info:
-            first_track = info["entries"][0]
-            ydl_opts_full = self.get_ydl_opts()
-            ydl_opts_full["extract_flat"] = False
-            ydl_full = YoutubeDL(ydl_opts_full)
-            try:
+            if "entries" in info:
+                first_track = info["entries"][0]
+                ydl_opts_full = self.get_ydl_opts(use_web_embedded=is_embeddable)
+                ydl_opts_full["extract_flat"] = False
+                ydl_full = YoutubeDL(ydl_opts_full)
                 start_time = time.time()
                 func_full = functools.partial(ydl_full.extract_info, first_track["url"], download=False)
                 first_track_info = await loop.run_in_executor(None, func_full)
                 logger.info(f"Первый трек извлечён за {time.time() - start_time:.2f} секунд")
                 source = first_track_info["url"]
                 title = first_track_info.get("title", title)
-            except Exception as e:
-                logger.error(f"Ошибка при извлечении первого трека: {e}")
-                error_msg = "Не удалось загрузить первый трек плейлиста."
-                if "Sign in to confirm you’re not a bot" in str(e):
-                    error_msg = "Видео требует входа в аккаунт YouTube. Убедитесь, что файл cookies.txt настроен."
-                elif "Requested format is not available" in str(e):
-                    error_msg += " Запрошенный формат недоступен."
-                await interaction.followup.send(error_msg)
-                return
-            self.queue[guild_id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
-        else:
-            ydl_opts_full = self.get_ydl_opts()
-            ydl_opts_full["extract_flat"] = False
-            ydl_full = YoutubeDL(ydl_opts_full)
-            try:
+                self.queue[guild_id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
+            else:
+                ydl_opts_full = self.get_ydl_opts(use_web_embedded=is_embeddable)
+                ydl_opts_full["extract_flat"] = False
+                ydl_full = YoutubeDL(ydl_opts_full)
                 start_time = time.time()
                 func_full = functools.partial(ydl_full.extract_info, url, download=False)
                 info_full = await loop.run_in_executor(None, func_full)
                 logger.info(f"Одиночный трек извлечён за {time.time() - start_time:.2f} секунд")
                 source = info_full["url"]
                 title = info_full.get("title", title)
-            except Exception as e:
-                logger.error(f"Ошибка при извлечении трека: {e}")
-                error_msg = "Не удалось загрузить трек."
-                if "Sign in to confirm you’re not a bot" in str(e):
-                    error_msg = "Видео требует входа в аккаунт YouTube. Убедитесь, что файл cookies.txt настроен."
-                elif "Requested format is not available" in str(e):
-                    error_msg += " Запрошенный формат недоступен."
-                await interaction.followup.send(error_msg)
-                return
 
-        async with aiohttp.ClientSession() as session:
-            try:
+            async with aiohttp.ClientSession() as session:
                 async with session.head(source, timeout=5) as response:
                     if response.status != 200:
                         logger.error(f"URL недоступен: {source}, статус: {response.status}")
                         await interaction.followup.send("Не удалось загрузить видео. Попробуйте другой URL.")
                         return
-            except aiohttp.ClientError as e:
-                logger.error(f"Ошибка при проверке URL: {e}")
-                await interaction.followup.send("Ошибка при проверке URL.")
-                return
 
-        self.current_tracks[guild_id] = title
-        self.current_sources.append(source)
-        self.loop[guild_id] = False
+            self.current_tracks[guild_id] = title
+            self.current_sources.append(source)
+            self.loop[guild_id] = False
 
-        ffmpeg_options = {
-            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10',
-            'options': '-vn -bufsize 1M'
-        }
-        vol = self.volume.get(guild_id, 1.0)
-        audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
-        try:
+            ffmpeg_options = {
+                'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10',
+                'options': '-vn -bufsize 1M'
+            }
+            vol = self.volume.get(guild_id, 1.0)
+            audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
             vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(guild_id)))
             logger.info(f"Воспроизведение начато: {title}")
             await interaction.followup.send(f"Играет сейчас: **{title}**")
-        except discord.ClientException as e:
-            logger.error(f"Ошибка воспроизведения: {e}")
-            await interaction.followup.send("Ошибка воспроизведения. Попробуйте снова.")
+        except Exception as e:
+            logger.error(f"Ошибка при извлечении данных: {e}")
+            error_msg = "Не удалось загрузить видео или плейлист. Проверьте URL."
+            if "Sign in to confirm you’re not a bot" in str(e):
+                error_msg = "Видео требует аутентификации, которая не поддерживается без cookies."
+            elif "Requested format is not available" in str(e):
+                error_msg += " Запрошенный формат недоступен."
+            await interaction.followup.send(error_msg)
 
     async def after_track(self, guild_id):
         vc = self.voice_clients.get(guild_id)
@@ -380,7 +359,7 @@ class Music(commands.Cog):
                 return
 
         logger.info(f"Попытка воспроизвести трек для guild_id {guild_id}, URL: {url}")
-        ydl_opts = self.get_ydl_opts()
+        ydl_opts = self.get_ydl_opts(use_web_embedded=True)
         ydl_opts["extract_flat"] = False
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
@@ -563,7 +542,8 @@ class Music(commands.Cog):
         self.queue[guild_id] = []
         await interaction.response.send_message("Очередь очищена.")
 
-# Функция setup для регистрации Cog
 async def setup(bot):
+    await bot.add_cog(Music(bot))
+    logger.info("Cog 'Music' зарегистрирован")
     await bot.add_cog(Music(bot))
     logger.info("Cog 'Music' зарегистрирован")
