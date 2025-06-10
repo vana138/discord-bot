@@ -22,6 +22,9 @@ class JamBot(commands.Bot):
         super().__init__(command_prefix="/", intents=intents, application_id="1330922461973450813")
         self.cog_loaded = False  # Флаг для отслеживания загрузки Cog
         logger.info("Инициализация бота")
+        # Проверка наличия YOUTUBE_API_KEY
+        if not os.getenv("YOUTUBE_API_KEY"):
+            logger.warning("YOUTUBE_API_KEY не установлен. Функции YouTube API будут недоступны.")
 
     async def setup_hook(self):
         try:
@@ -53,7 +56,7 @@ class DummyServer(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Bot is running")
 
-    def do_HEAD(self):  # Добавляем поддержку HEAD-запросов
+    def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
 
@@ -63,7 +66,7 @@ def run_server():
     logger.info(f"Запуск HTTP-сервера на порту {port}")
     server.serve_forever()
 
-if __name__ == "__main__":  # Защита от повторного запуска
+if __name__ == "__main__":
     try:
         threading.Thread(target=run_server, daemon=True).start()
         bot = JamBot()
