@@ -20,21 +20,17 @@ intents.message_content = True
 class JamBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="/", intents=intents, application_id="1330922461973450813")
-        self.cog_loaded = False  # Флаг для отслеживания загрузки Cog
         logger.info("Инициализация бота")
-        # Проверка наличия YOUTUBE_API_KEY
         if not os.getenv("YOUTUBE_API_KEY"):
             logger.warning("YOUTUBE_API_KEY не установлен. Функции YouTube API будут недоступны.")
 
     async def setup_hook(self):
         try:
-            if not self.cog_loaded:
-                from commands import setup
-                await setup(self)
-                self.cog_loaded = True
-                logger.info("Команды успешно загружены")
+            from commands import Music
+            await self.add_cog(Music(self))
+            logger.info("Cog 'Music' успешно загружен")
         except Exception as e:
-            logger.error(f"Ошибка в setup_hook: {e}")
+            logger.error(f"Ошибка при загрузке Cog: {e}")
             raise
 
     async def on_ready(self):
