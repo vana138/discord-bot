@@ -16,15 +16,19 @@ import random
 import re
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logging.getLogger('googleapiclient.discovery_cache').setLevel(logging.WARNING)
 
 # Диагностика FFmpeg
 logger.info(f"FFmpeg available: {shutil.which('ffmpeg')}")
 
-# Список user-agent'ов для имитации браузера
+# Список user-agent'ов
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
@@ -34,26 +38,46 @@ USER_AGENTS = [
 class Music(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.voice_clients = {}         # voice_client по guild_id
-        self.current_tracks = {}        # название текущего трека по guild_id
-        self.current_sources = {}       # прямой URL аудио по guild_id
-        self.queue = {}                 # очередь треков (URL) по guild_id
-        self.loop = {}                  # повтор текущего трека (bool) по guild_id
-        self.loop_queue = {}            # повтор всей очереди (bool) по guild_id
-        self.volume = {}                # уровень громкости (float, 1.0 по умолчанию) по guild_id
-        self.voice_channel_ids = {}     # ID голосового канала по guild_id
-        self.youtube_api_key = os.getenv("YOUTUBE_API_KEY")
+        self.voice_clients = {}
+        self.current_tracks = {}
+        self.current_sources = []
+        self.queue = {}
+        self.loop = {}
+        self.volume = {}
+        self.voice_channel_ids = {}
         self.youtube = None
-        if self.youtube_api_key:
-            self.youtube = build("youtube", "v3", developerKey=self.youtube_api_key)
-            logger.info("YouTube API инициализирован")
+        self.cookies_path = os.path.join("config", "cookies.txt")
+        
+        # Настройка OAuth для YouTube API
+        scopes = ["https://www.googleapis.com/auth/youtube.readonly"]
+        credentials = None
+        token_path = "token.json"
+        
+        if os.path.exists(token_path):
+            credentials = Credentials.from_authorized_user_file(token_path, scopes)
+        
+        if not credentials or not credentials.valid:
+            if credentials and credentials.expired and credentials.refresh_token:
+                credentials.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    "client_secret.json", scopes=scopes
+                )
+                # Для локального тестирования, для Render нужно загрузить token.json
+                credentials = flow.run_local_server(port=8080)
+            with open(token_path, "w") as token_file:
+                token_file.write(credentials.to_json())
+        
+        if credentials:
+            self.youtube = build("youtube", "v3", credentials=credentials)
+            logger.info("YouTube API инициализирован через OAuth")
         else:
-            logger.warning("YOUTUBE_API_KEY не установлен, функции API недоступны")
+            logger.warning("Не удалось инициализировать YouTube API через OAuth")
+        
+        if not os.path.exists(self.cookies_path):
+            logger.warning(f"Файл cookies не найден по пути {self.cookies_path}")
 
     def get_ydl_opts(self):
-        """
-        Возвращает настройки yt-dlp с прокси и случайным user-agent.
-        """
         ydl_opts = {
             "format": "bestaudio/best",
             "noplaylist": False,
@@ -73,12 +97,12 @@ class Music(commands.Cog):
         if proxy:
             ydl_opts["proxy"] = proxy
             logger.info(f"Используется прокси: {proxy}")
+        if os.path.exists(self.cookies_path):
+            ydl_opts["cookies"] = self.cookies_path
+            logger.info(f"Используются cookies из {self.cookies_path}")
         return ydl_opts
 
     async def check_video_access(self, video_id):
-        """
-        Проверяет доступность видео через YouTube API и возвращает метаданные.
-        """
         if not self.youtube:
             logger.warning("YouTube API не инициализирован")
             return None
@@ -137,14 +161,12 @@ class Music(commands.Cog):
             await interaction.followup.send("Вы должны быть в голосовом канале!")
             return
 
-        # Извлечение video_id из URL
         video_id = None
         if "youtu.be" in url or "youtube.com" in url:
             match = re.search(r"(?:v=|youtu\.be\/)([\w\-_]+)", url)
             if match:
                 video_id = match.group(1)
 
-        # Проверка через YouTube API
         title = "Неизвестный трек"
         is_playable = True
         if video_id and self.youtube:
@@ -152,10 +174,10 @@ class Music(commands.Cog):
             if video_info:
                 if video_info.get("error"):
                     if video_info["error"] == "Quota exceeded":
-                        await interaction.followup.send("Превышена лимита YouTube API. Попробуйте позже.")
+                        await interaction.followup.send("Превышена квота YouTube API. Попробуйте позже.")
                         return
                     elif video_info["error"] == "Access restricted":
-                        await interaction.followup.send("Видео требует входа в аккаунт YouTube. Попробуйте общедоступное видео.")
+                        await interaction.followup.send("Видео требует входа в аккаунт YouTube. Убедитесь, что cookies настроены.")
                         return
                 else:
                     title = video_info["title"]
@@ -240,7 +262,7 @@ class Music(commands.Cog):
                 logger.error(f"Ошибка при извлечении данных: {e}")
                 error_msg = "Не удалось загрузить видео или плейлист. Проверьте URL."
                 if "Sign in to confirm you’re not a bot" in str(e):
-                    error_msg = "Видео требует входа в аккаунт YouTube. Попробуйте общедоступное видео или другой источник (например, SoundCloud)."
+                    error_msg = "Видео требует входа в аккаунт YouTube. Убедитесь, что файл cookies.txt настроен."
                 elif "Requested format is not available" in str(e):
                     error_msg += " Запрошенный формат недоступен."
                 await interaction.followup.send(error_msg)
@@ -257,12 +279,12 @@ class Music(commands.Cog):
                 first_track_info = await loop.run_in_executor(None, func_full)
                 logger.info(f"Первый трек извлечён за {time.time() - start_time:.2f} секунд")
                 source = first_track_info["url"]
-                title = first_track_info.get("title", title)  # Используем API title, если доступен
+                title = first_track_info.get("title", title)
             except Exception as e:
                 logger.error(f"Ошибка при извлечении первого трека: {e}")
                 error_msg = "Не удалось загрузить первый трек плейлиста."
                 if "Sign in to confirm you’re not a bot" in str(e):
-                    error_msg = "Видео требует входа в аккаунт YouTube."
+                    error_msg = "Видео требует входа в аккаунт YouTube. Убедитесь, что файл cookies.txt настроен."
                 elif "Requested format is not available" in str(e):
                     error_msg += " Запрошенный формат недоступен."
                 await interaction.followup.send(error_msg)
@@ -283,7 +305,7 @@ class Music(commands.Cog):
                 logger.error(f"Ошибка при извлечении трека: {e}")
                 error_msg = "Не удалось загрузить трек."
                 if "Sign in to confirm you’re not a bot" in str(e):
-                    error_msg = "Видео требует входа в аккаунт YouTube. Попробуйте другой источник."
+                    error_msg = "Видео требует входа в аккаунт YouTube. Убедитесь, что файл cookies.txt настроен."
                 elif "Requested format is not available" in str(e):
                     error_msg += " Запрошенный формат недоступен."
                 await interaction.followup.send(error_msg)
@@ -302,7 +324,7 @@ class Music(commands.Cog):
                 return
 
         self.current_tracks[guild_id] = title
-        self.current_sources[guild_id] = source
+        self.current_sources.append(source)
         self.loop[guild_id] = False
 
         ffmpeg_options = {
@@ -325,13 +347,13 @@ class Music(commands.Cog):
             logger.info(f"Нет активного соединения для guild_id {guild_id}")
             return
         if self.loop.get(guild_id, False):
-            source = self.current_sources.get(guild_id)
+            source = self.current_sources[-1]
             if source:
                 self.bot.loop.create_task(self.play_track_from_url(guild_id, source))
         elif self.queue.get(guild_id) and len(self.queue.get(guild_id)) > 0:
             next_track = self.queue[guild_id].pop(0)
             self.bot.loop.create_task(self.play_track_from_url(guild_id, next_track["url"]))
-        elif self.loop_queue.get(guild_id, False) and self.queue.get(guild_id):
+        elif self.loop.get(guild_id, False) and self.queue.get(guild_id):
             if len(self.queue[guild_id]) > 0:
                 first_url = self.queue[guild_id][0]["url"]
                 self.bot.loop.create_task(self.play_track_from_url(guild_id, first_url))
@@ -387,7 +409,7 @@ class Music(commands.Cog):
                 return
 
         self.current_tracks[guild_id] = title
-        self.current_sources[guild_id] = source
+        self.current_sources.append(source)
         ffmpeg_options = {
             'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10',
             'options': '-vn -bufsize 1M'
@@ -445,7 +467,7 @@ class Music(commands.Cog):
             await vc.disconnect(force=True)
             del self.voice_clients[interaction.guild.id]
             self.current_tracks.pop(interaction.guild.id, None)
-            self.current_sources.pop(interaction.guild.id, None)
+            self.current_sources.clear()
             await interaction.followup.send("Воспроизведение остановлено и бот отключен от канала.")
         else:
             await interaction.response.send_message("Бот не подключен к голосовому каналу.")
@@ -467,7 +489,7 @@ class Music(commands.Cog):
         if interaction.guild.id in self.voice_clients:
             vc = self.voice_clients[interaction.guild.id]
             if vc.is_playing() or vc.is_paused():
-                source = self.current_sources.get(interaction.guild.id)
+                source = self.current_sources[-1] if self.current_sources else None
                 if not source:
                     await interaction.response.send_message("Текущий трек не найден!")
                     return
@@ -520,7 +542,7 @@ class Music(commands.Cog):
             return
         guild_id = interaction.guild.id
         self.volume[guild_id] = vol / 100.0
-        if guild_id in self.voice_clients and self.current_sources.get(guild_id):
+        if guild_id in self.voice_clients and self.current_sources:
             vc = self.voice_clients[guild_id]
             if hasattr(vc.source, 'volume'):
                 vc.source.volume = vol / 100.0
@@ -531,8 +553,8 @@ class Music(commands.Cog):
     @app_commands.command(name="loopqueue", description="Включает или выключает повтор всей очереди")
     async def loopqueue(self, interaction: discord.Interaction):
         guild_id = interaction.guild.id
-        self.loop_queue[guild_id] = not self.loop_queue.get(guild_id, False)
-        status = "включён" if self.loop_queue[guild_id] else "выключен"
+        self.loop[guild_id] = not self.loop.get(guild_id, False)
+        status = "включён" if self.loop[guild_id] else "выключен"
         await interaction.response.send_message(f"Режим повтора очереди {status}.")
 
     @app_commands.command(name="clearqueue", description="Очищает очередь треков")
