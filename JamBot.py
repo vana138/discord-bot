@@ -1,77 +1,47 @@
 #JamBot.py
 
-import os
 import discord
 from discord.ext import commands
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
 import logging
+import os
+import asyncio
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Настройка бота
 intents = discord.Intents.default()
-intents.messages = True
-intents.guilds = True
-intents.voice_states = True
 intents.message_content = True
+intents.voice_states = True
 
-class JamBot(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="/", intents=intents, application_id="1330922461973450813")
-        logger.info("Инициализация бота")
-        if not os.getenv("YOUTUBE_API_KEY"):
-            logger.warning("YOUTUBE_API_KEY не установлен. Функции YouTube API будут недоступны.")
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-    async def setup_hook(self):
-        try:
-            from commands import Music
-            await self.add_cog(Music(self))
-            logger.info("Cog 'Music' успешно загружен")
-        except Exception as e:
-            logger.error(f"Ошибка при загрузке Cog: {e}")
-            raise
+# Загрузка Cog
+async def load():
+    await bot.load_extension("commands")
+    logger.info("Cog 'Music' успешно загружен")
 
-    async def on_ready(self):
-        logger.info(f'Бот {self.user} готов к работе!')
-        try:
-            synced = await self.tree.sync()
-            commands_list = "\n".join([f"{cmd.name} (ID: {cmd.id})" for cmd in synced])
-            logger.info(f"Синхронизировано {len(synced)} команд:\n{commands_list}")
-        except Exception as e:
-            logger.error(f"Ошибка синхронизации команд: {e}")
-
-    async def on_voice_state_update(self, member, before, after):
-        if member.id == self.user.id and before.channel and not after.channel:
-            logger.info(f"Бот был отключён от голосового канала {before.channel.name}")
-
-class DummyServer(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running")
-
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
-
-def run_server():
-    port = int(os.getenv("PORT", 8080))
-    server = HTTPServer(('0.0.0.0', port), DummyServer)
-    logger.info(f"Запуск HTTP-сервера на порту {port}")
-    server.serve_forever()
-
-if __name__ == "__main__":
+# Событие при готовности бота
+@bot.event
+async def on_ready():
+    logger.info("Инициализация бота")
+    await load()
+    logger.info("Запуск бота")
+    logger.info(f"Запуск HTTP-сервера на порту 8080")
+    # Синхронизация команд (глобальная)
     try:
-        threading.Thread(target=run_server, daemon=True).start()
-        bot = JamBot()
-        TOKEN = os.getenv("DISCORD_TOKEN")
-        if not TOKEN:
-            logger.error("DISCORD_TOKEN не установлен в переменных окружения!")
-            raise ValueError("DISCORD_TOKEN не установлен")
-        logger.info("Запуск бота")
-        bot.run(TOKEN)
+        synced = await bot.tree.sync()
+        logger.info(f"Синхронизировано {len(synced)} команд: {[command.name for command in synced]}")
     except Exception as e:
-        logger.error(f"Ошибка при запуске бота: {e}")
-        raise
+        logger.error(f"Ошибка синхронизации команд: {e}")
+    logger.info(f"Бот {bot.user.name}#{bot.user.discriminator} готов к работе!")
+
+# Запуск бота
+if __name__ == "__main__":
+    token = os.getenv("DISCORD_TOKEN", "your_discord_token_here")
+    if not token or token == "your_discord_token_here":
+        logger.error("DISCORD_TOKEN не установлен или указан неверно. Установите его через переменные окружения.")
+    else:
+        bot.loop.create_task(on_ready())
+        bot.run(token)
