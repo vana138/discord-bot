@@ -55,6 +55,7 @@ class Music(commands.Cog):
             password = os.getenv(f"YOUTUBE_ACCOUNT{i}_PASSWORD")
             if username and password:
                 self.accounts.append({"username": username, "password": password})
+                logger.info(f"Загружен аккаунт {i}: {username}")
         if not self.accounts:
             logger.warning("Ни один аккаунт не настроен. Убедитесь, что переменные окружения YOUTUBE_ACCOUNT[1-3]_USERNAME и YOUTUBE_ACCOUNT[1-3]_PASSWORD заданы.")
         self.current_account_index = 0
@@ -86,7 +87,7 @@ class Music(commands.Cog):
         if current_account:
             ydl_opts["username"] = current_account["username"]
             ydl_opts["password"] = current_account["password"]
-            logger.info(f"Используется аккаунт: {current_account['username']}")
+            logger.info(f"Используется аккаунт для загрузки: {current_account['username']}")
         
         if use_web_embedded:
             ydl_opts["extractor_args"] = {"youtube": {"player_client": "web_embedded"}}
@@ -202,7 +203,7 @@ class Music(commands.Cog):
                     except Exception as e:
                         logger.error(f"Ошибка подключения к голосовому каналу (попытка {attempt + 1}/{max_retries}): {str(e)}")
                         if attempt == max_retries - 1:
-                            await interaction.followup.send(f"Не удалось подключиться к голосовому каналу после {max_retries} попыток. Возможно, платформа Render больше не поддерживает голосовые подключения. Попробуйте откатить discord.py до версии 1.7.3 или используйте VPS.")
+                            await interaction.followup.send(f"Не удалось подключиться к голосовому каналу после {max_retries} попыток. Возможно, платформа Render больше не поддерживает голосовые подключения. Попробуйте использовать VPS.")
                             return
                         await asyncio.sleep(2)
             else:
@@ -313,7 +314,7 @@ class Music(commands.Cog):
                     'options': '-vn -bufsize 1M'
                 }
                 vol = self.volume.get(guild_id, 1.0)
-                audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
+                audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_opts), volume=vol)
                 vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(guild_id)))
                 logger.info(f"Воспроизведение начато: {title}")
                 await interaction.followup.send(f"Играет сейчас: **{title}**")
@@ -322,9 +323,11 @@ class Music(commands.Cog):
                 logger.error(f"Ошибка при извлечении данных с аккаунтом {self.current_account_index + 1}: {e}")
                 if "Sign in to confirm" in str(e) or "blocked" in str(e):
                     if await self.switch_account():
+                        logger.info(f"Переключение на следующий аккаунт успешно")
                         await interaction.followup.send(f"Аккаунт заблокирован. Переключаюсь на следующий аккаунт.")
                         continue
                     else:
+                        logger.error("Все аккаунты исчерпаны или заблокированы")
                         await interaction.followup.send("Все аккаунты заблокированы или исчерпаны. Обратитесь к администратору.")
                         return
                 await interaction.followup.send(f"Ошибка: {e}")
@@ -507,7 +510,7 @@ class Music(commands.Cog):
     async def queue(self, interaction: discord.Interaction, url: str = None):
         guild_id = interaction.guild.id
         if url:
-            self.queue.setdefault(guild_id, []).append({"url": url, "title": "Неизвестный трек"})
+            self.queue.setdefault(guild_id, []).append({"url": url, "title": "Неизвестный треk"})
             await interaction.response.send_message("Трек добавлен в очередь!")
         elif guild_id in self.queue and self.queue[guild_id]:
             queue_list = "\n".join([f"{i+1}. {track['title']}" for i, track in enumerate(self.queue[guild_id])])
