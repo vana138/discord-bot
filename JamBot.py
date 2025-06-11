@@ -5,6 +5,7 @@ from discord.ext import commands
 import logging
 import os
 import asyncio
+import time
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -25,9 +26,11 @@ async def load():
 @bot.event
 async def on_ready():
     logger.info("Инициализация бота")
+    start_time = time.time()
     await load()
+    logger.info(f"Cog загружен за {time.time() - start_time:.2f} секунд")
     logger.info("Запуск бота")
-    logger.info("Запуск HTTP-сервера на порту 8080")
+    logger.info("Запуск HTTP-сервера на порту 8080 (отмечено для диагностики)")
     # Синхронизация команд (глобальная)
     try:
         synced = await bot.tree.sync()
@@ -38,13 +41,14 @@ async def on_ready():
         logger.error(f"Ошибка синхронизации команд: {e}")
     logger.info(f"Бот {bot.user.name}#{bot.user.discriminator} готов к работе!")
 
-# Асинхронная главная функция (исправлена)
+# Асинхронная главная функция
 async def main():
     token = os.getenv("DISCORD_TOKEN", "your_discord_token_here")
     if not token or token == "your_discord_token_here":
         logger.error("DISCORD_TOKEN не установлен или указан неверно. Установите его через переменные окружения.")
     else:
-        await bot.start(token)  # Используем await bot.start() напрямую
+        logger.info("Запуск бота с токеном...")
+        await bot.start(token)
 
 # Запуск бота
 if __name__ == "__main__":
