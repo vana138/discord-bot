@@ -38,14 +38,13 @@ async def on_ready():
         logger.error(f"Ошибка синхронизации команд: {e}")
     logger.info(f"Бот {bot.user.name}#{bot.user.discriminator} готов к работе!")
 
-# Асинхронная главная функция
+# Асинхронная главная функция (исправлена)
 async def main():
-    async with bot:
-        token = os.getenv("DISCORD_TOKEN", "your_discord_token_here")
-        if not token or token == "your_discord_token_here":
-            logger.error("DISCORD_TOKEN не установлен или указан неверно. Установите его через переменные окружения.")
-        else:
-            await bot.start(token)
+    token = os.getenv("DISCORD_TOKEN", "your_discord_token_here")
+    if not token or token == "your_discord_token_here":
+        logger.error("DISCORD_TOKEN не установлен или указан неверно. Установите его через переменные окружения.")
+    else:
+        await bot.start(token)  # Используем await bot.start() напрямую
 
 # Запуск бота
 if __name__ == "__main__":
