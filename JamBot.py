@@ -28,11 +28,13 @@ async def on_ready():
     logger.info("Инициализация бота")
     await load()
     logger.info("Запуск бота")
-    logger.info(f"Запуск HTTP-сервера на порту 8080")
+    logger.info("Запуск HTTP-сервера на порту 8080")
     # Синхронизация команд (глобальная)
     try:
         synced = await bot.tree.sync()
-        logger.info(f"Синхронизировано {len(synced)} команд: {[command.name for command in synced]}")
+        logger.info(f"Синхронизировано {len(synced)} команд:")
+        for command in synced:
+            logger.info(f"- {command.name}")
     except Exception as e:
         logger.error(f"Ошибка синхронизации команд: {e}")
     logger.info(f"Бот {bot.user.name}#{bot.user.discriminator} готов к работе!")
