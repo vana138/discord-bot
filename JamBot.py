@@ -12,8 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Настройка бота
 intents = discord.Intents.default()
-intents.message_content = True
-intents.voice_states = True
+intents.voice_states = True  # Сохранён для работы с голосовыми каналами
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
