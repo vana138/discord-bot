@@ -197,10 +197,20 @@ class Music(commands.Cog):
                     del self.voice_clients[guild_id]
 
             if guild_id not in self.voice_clients:
-                vc = await voice_channel.connect(reconnect=True, timeout=5.0)
-                self.voice_clients[guild_id] = vc
-                self.volume[guild_id] = 1.0
-                logger.info(f"Подключено к голосовому каналу {voice_channel.name} за {time.time() - start_time:.2f} секунд")
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        vc = await voice_channel.connect(reconnect=True, timeout=5.0)
+                        self.voice_clients[guild_id] = vc
+                        self.volume[guild_id] = 1.0
+                        logger.info(f"Подключено к голосовому каналу {voice_channel.name} за {time.time() - start_time:.2f} секунд")
+                        break
+                    except Exception as e:
+                        logger.error(f"Ошибка подключения к голосовому каналу (попытка {attempt + 1}/{max_retries}): {e}")
+                        if attempt == max_retries - 1:
+                            await interaction.followup.send(f"Не удалось подключиться к каналу после {max_retries} попыток: {str(e)}")
+                            return
+                        await asyncio.sleep(2)
             else:
                 vc = self.voice_clients[guild_id]
 
@@ -283,7 +293,7 @@ class Music(commands.Cog):
                     title = first_track_info.get("title", title)
                     self.queue[guild_id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
                 else:
-                    ydl_opts_full = self.get_ydl_opts(use_web_embedded=is_embedded)
+                    ydl_opts_full = self.get_ydl_opts(use_web_embedded=is_embeddable)
                     ydl_opts_full["extract_flat"] = False
                     ydl_full = YoutubeDL(ydl_opts_full)
                     start_time = time.time()
@@ -437,7 +447,7 @@ class Music(commands.Cog):
             vc = self.voice_clients[interaction.guild.id]
             if vc.is_paused():
                 vc.resume()
-                title = self.current_tracks.get(interaction.guild.id, "Неизвестный трек")
+                title = self.current_tracks.get(interaction.guild.id, "Неизвестный треk")
                 await interaction.response.send_message(f"Воспроизведение продолжено: **{title}**")
             else:
                 await interaction.response.send_message("Музыка уже воспроизводится.")
