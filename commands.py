@@ -551,5 +551,3 @@ class Music(commands.Cog):
 async def setup(bot):
     await bot.add_cog(Music(bot))
     logger.info("Cog 'Music' зарегистрирован")
-    await bot.add_cog(Music(bot))
-    logger.info("Cog 'Music' зарегистрирован")
