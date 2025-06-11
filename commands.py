@@ -1,5 +1,3 @@
-#commands.py
-
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -69,9 +67,9 @@ class Music(commands.Cog):
         return True
 
     def get_ydl_opts(self, use_web_embedded=False):
-        proxy = os.getenv("HTTP_PROXY")
-        if not proxy:
-            raise ValueError("Переменная окружения HTTP_PROXY не установлена. Настройте прокси на Render.com.")
+        # proxy = os.getenv("HTTP_PROXY")
+        # if not proxy:
+        #     raise ValueError("Переменная окружения HTTP_PROXY не установлена. Настройте прокси на Render.com.")
         
         current_account = self.accounts[self.current_account_index] if self.accounts else None
         ydl_opts = {
@@ -88,7 +86,7 @@ class Music(commands.Cog):
             "user_agent": random.choice(USER_AGENTS),
             "default_search": "ytsearch",
             "no_check_certificate": True,
-            "proxy": proxy,
+            # "proxy": proxy,
         }
         if current_account:
             ydl_opts["username"] = current_account["username"]
@@ -291,7 +289,7 @@ class Music(commands.Cog):
                     logger.info(f"Первый трек извлечён за {time.time() - start_time:.2f} секунд")
                     source = first_track_info["url"]
                     title = first_track_info.get("title", title)
-                    self.queue[guild_id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
+                    self.queue[guild_id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный треk")} for entry in info["entries"][1:]]
                 else:
                     ydl_opts_full = self.get_ydl_opts(use_web_embedded=is_embeddable)
                     ydl_opts_full["extract_flat"] = False
@@ -385,7 +383,7 @@ class Music(commands.Cog):
             info = await loop.run_in_executor(None, func)
             logger.info(f"Трек извлечён за {time.time() - start_time:.2f} секунд")
             source = info["url"]
-            title = info.get("title", "Неизвестный трек")
+            title = info.get("title", "Неизвестный треk")
         except Exception as e:
             logger.error(f"Ошибка извлечения трека: {e}")
             self.bot.loop.create_task(self.after_track(guild_id))
@@ -421,7 +419,7 @@ class Music(commands.Cog):
             logger.error(f"Ошибка воспроизведения: {e}")
             return
 
-    @app_commands.command(name="nowplaying", description="Показывает текущий трек")
+    @app_commands.command(name="nowplaying", description="Показывает текущий треk")
     async def nowplaying(self, interaction: discord.Interaction):
         title = self.current_tracks.get(interaction.guild.id, None)
         if title:
@@ -467,7 +465,7 @@ class Music(commands.Cog):
         else:
             await interaction.response.send_message("Бот не подключен к голосовому каналу.")
 
-    @app_commands.command(name="skip", description="Пропускает текущий трек")
+    @app_commands.command(name="skip", description="Пропускает текущий треk")
     async def skip(self, interaction: discord.Interaction):
         if interaction.guild.id in self.voice_clients:
             vc = self.voice_clients[interaction.guild.id]
@@ -486,7 +484,7 @@ class Music(commands.Cog):
             if vc.is_playing() or vc.is_paused():
                 source = self.current_sources[-1] if self.current_sources else None
                 if not source:
-                    await interaction.response.send_message("Текущий трек не найден!")
+                    await interaction.response.send_message("Текущий треk не найден!")
                     return
                 vc.stop()
                 ffmpeg_options = {
@@ -509,7 +507,7 @@ class Music(commands.Cog):
         status = "включен" if self.loop[guild_id] else "выключен"
         await interaction.response.send_message(f"Режим повтора {status}.")
 
-    @app_commands.command(name="queue", description="Добавляет трек в очередь или показывает список")
+    @app_commands.command(name="queue", description="Добавляет треk в очередь или показывает список")
     async def queue(self, interaction: discord.Interaction, url: str = None):
         guild_id = interaction.guild.id
         if url:
@@ -521,12 +519,12 @@ class Music(commands.Cog):
         else:
             await interaction.response.send_message("Очередь пуста.")
 
-    @app_commands.command(name="unqueue", description="Удаляет трек из очереди по номеру")
+    @app_commands.command(name="unqueue", description="Удаляет треk из очереди по номеру")
     async def unqueue(self, interaction: discord.Interaction, index: int):
         guild_id = interaction.guild.id
         if guild_id in self.queue and 0 <= index - 1 < len(self.queue[guild_id]):
             removed_track = self.queue[guild_id].pop(index - 1)
-            await interaction.response.send_message(f"Удалён трек: {removed_track['title']}")
+            await interaction.response.send_message(f"Удалён треk: {removed_track['title']}")
         else:
             await interaction.response.send_message("Неверный индекс или очередь пуста.")
 
