@@ -46,37 +46,34 @@ class Music(commands.Cog):
         self.volume = {}
         self.voice_channel_ids = {}
         self.youtube = None
-        
-        # Настройка OAuth для YouTube API
-        scopes = ["https://www.googleapis.com/auth/youtube.readonly"]
-        credentials = None
-        token_path = "token.json"
-        
-        if os.path.exists(token_path):
-            credentials = Credentials.from_authorized_user_file(token_path, scopes)
-        
-        if not credentials or not credentials.valid:
-            if credentials and credentials.expired and credentials.refresh_token:
-                credentials.refresh(Request())
-            else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    "client_secret.json", scopes=scopes
-                )
-                credentials = flow.run_local_server(port=8080)
-            with open(token_path, "w") as token_file:
-                token_file.write(credentials.to_json())
-        
-        if credentials:
-            self.youtube = build("youtube", "v3", credentials=credentials)
-            logger.info("YouTube API инициализирован через OAuth")
-        else:
-            logger.warning("Не удалось инициализировать YouTube API через OAuth")
+        self.accounts = []
+        self.current_account_index = 0
+        self.load_accounts()
+
+    def load_accounts(self):
+        self.accounts = []
+        for i in range(1, 4):  # Поддержка до 3 аккаунтов
+            username = os.getenv(f"YOUTUBE_ACCOUNT{i}_USERNAME")
+            password = os.getenv(f"YOUTUBE_ACCOUNT{i}_PASSWORD")
+            if username and password:
+                self.accounts.append({"username": username, "password": password})
+        if not self.accounts:
+            logger.warning("Ни один аккаунт не настроен. Убедитесь, что переменные окружения YOUTUBE_ACCOUNT[1-3]_USERNAME и YOUTUBE_ACCOUNT[1-3]_PASSWORD заданы.")
+        self.current_account_index = 0
+
+    async def switch_account(self):
+        if not self.accounts or len(self.accounts) <= 1:
+            return False
+        self.current_account_index = (self.current_account_index + 1) % len(self.accounts)
+        logger.info(f"Переключение на аккаунт {self.current_account_index + 1}: {self.accounts[self.current_account_index]['username']}")
+        return True
 
     def get_ydl_opts(self, use_web_embedded=False):
         proxy = os.getenv("HTTP_PROXY")
         if not proxy:
             raise ValueError("Переменная окружения HTTP_PROXY не установлена. Настройте прокси на Render.com.")
         
+        current_account = self.accounts[self.current_account_index] if self.accounts else None
         ydl_opts = {
             "format": "bestaudio/best",
             "noplaylist": False,
@@ -91,9 +88,12 @@ class Music(commands.Cog):
             "user_agent": random.choice(USER_AGENTS),
             "default_search": "ytsearch",
             "no_check_certificate": True,
-            "proxy": proxy
+            "proxy": proxy,
         }
-        logger.info(f"Используется прокси: {proxy}")
+        if current_account:
+            ydl_opts["username"] = current_account["username"]
+            ydl_opts["password"] = current_account["password"]
+            logger.info(f"Используется аккаунт: {current_account['username']}")
         
         if use_web_embedded:
             ydl_opts["extractor_args"] = {"youtube": {"player_client": "web_embedded"}}
@@ -232,93 +232,99 @@ class Music(commands.Cog):
             if video_info and "is_playable" in video_info:
                 is_embeddable = video_info["is_playable"]
 
-        try:
-            ydl_opts = self.get_ydl_opts(use_web_embedded=is_embeddable)
-            ydl = YoutubeDL(ydl_opts)
-            loop = asyncio.get_event_loop()
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                ydl_opts = self.get_ydl_opts(use_web_embedded=is_embeddable)
+                ydl = YoutubeDL(ydl_opts)
+                loop = asyncio.get_event_loop()
 
-            def load_cache(playlist_url):
-                cache_file = "playlist_cache.json"
-                if os.path.exists(cache_file):
-                    with open(cache_file, "r", encoding="utf-8") as f:
-                        cache = json.load(f)
-                    return cache.get(playlist_url, None)
-                return None
+                def load_cache(playlist_url):
+                    cache_file = "playlist_cache.json"
+                    if os.path.exists(cache_file):
+                        with open(cache_file, "r", encoding="utf-8") as f:
+                            cache = json.load(f)
+                        return cache.get(playlist_url, None)
+                    return None
 
-            def save_cache(playlist_url, tracks):
-                cache_file = "playlist_cache.json"
-                cache = {}
-                if os.path.exists(cache_file):
-                    with open(cache_file, "r", encoding="utf-8") as f:
-                        cache = json.load(f)
-                cache[playlist_url] = tracks
-                with open(cache_file, "w", encoding="utf-8") as f:
-                    json.dump(cache, f, ensure_ascii=False, indent=2)
+                def save_cache(playlist_url, tracks):
+                    cache_file = "playlist_cache.json"
+                    cache = {}
+                    if os.path.exists(cache_file):
+                        with open(cache_file, "r", encoding="utf-8") as f:
+                            cache = json.load(f)
+                    cache[playlist_url] = tracks
+                    with open(cache_file, "w", encoding="utf-8") as f:
+                        json.dump(cache, f, ensure_ascii=False, indent=2)
 
-            cached = load_cache(url)
-            if cached:
-                logger.info(f"Используем кэш для {url}")
-                info = cached
-            else:
-                logger.info(f"Начинаем извлечение данных для URL: {url}")
-                start_time = time.time()
-                func = functools.partial(ydl.extract_info, url, download=False)
-                info = await loop.run_in_executor(None, func)
-                logger.info(f"Данные извлечены за {time.time() - start_time:.2f} секунд")
+                cached = load_cache(url)
+                if cached:
+                    logger.info(f"Используем кэш для {url}")
+                    info = cached
+                else:
+                    logger.info(f"Начинаем извлечение данных для URL: {url}")
+                    start_time = time.time()
+                    func = functools.partial(ydl.extract_info, url, download=False)
+                    info = await loop.run_in_executor(None, func)
+                    logger.info(f"Данные извлечены за {time.time() - start_time:.2f} секунд")
+                    if "entries" in info:
+                        save_cache(url, info)
+
                 if "entries" in info:
-                    save_cache(url, info)
+                    first_track = info["entries"][0]
+                    ydl_opts_full = self.get_ydl_opts(use_web_embedded=is_embeddable)
+                    ydl_opts_full["extract_flat"] = False
+                    ydl_full = YoutubeDL(ydl_opts_full)
+                    start_time = time.time()
+                    func_full = functools.partial(ydl_full.extract_info, first_track["url"], download=False)
+                    first_track_info = await loop.run_in_executor(None, func_full)
+                    logger.info(f"Первый трек извлечён за {time.time() - start_time:.2f} секунд")
+                    source = first_track_info["url"]
+                    title = first_track_info.get("title", title)
+                    self.queue[guild_id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
+                else:
+                    ydl_opts_full = self.get_ydl_opts(use_web_embedded=is_embedded)
+                    ydl_opts_full["extract_flat"] = False
+                    ydl_full = YoutubeDL(ydl_opts_full)
+                    start_time = time.time()
+                    func_full = functools.partial(ydl_full.extract_info, url, download=False)
+                    info_full = await loop.run_in_executor(None, func_full)
+                    logger.info(f"Одиночный трек извлечён за {time.time() - start_time:.2f} секунд")
+                    source = info_full["url"]
+                    title = info_full.get("title", title)
 
-            if "entries" in info:
-                first_track = info["entries"][0]
-                ydl_opts_full = self.get_ydl_opts(use_web_embedded=is_embeddable)
-                ydl_opts_full["extract_flat"] = False
-                ydl_full = YoutubeDL(ydl_opts_full)
-                start_time = time.time()
-                func_full = functools.partial(ydl_full.extract_info, first_track["url"], download=False)
-                first_track_info = await loop.run_in_executor(None, func_full)
-                logger.info(f"Первый трек извлечён за {time.time() - start_time:.2f} секунд")
-                source = first_track_info["url"]
-                title = first_track_info.get("title", title)
-                self.queue[guild_id] = [{"url": entry["url"], "title": entry.get("title", "Неизвестный трек")} for entry in info["entries"][1:]]
-            else:
-                ydl_opts_full = self.get_ydl_opts(use_web_embedded=is_embeddable)
-                ydl_opts_full["extract_flat"] = False
-                ydl_full = YoutubeDL(ydl_opts_full)
-                start_time = time.time()
-                func_full = functools.partial(ydl_full.extract_info, url, download=False)
-                info_full = await loop.run_in_executor(None, func_full)
-                logger.info(f"Одиночный трек извлечён за {time.time() - start_time:.2f} секунд")
-                source = info_full["url"]
-                title = info_full.get("title", title)
+                async with aiohttp.ClientSession() as session:
+                    async with session.head(source, timeout=5) as response:
+                        if response.status != 200:
+                            logger.error(f"URL недоступен: {source}, статус: {response.status}")
+                            await interaction.followup.send("Не удалось загрузить видео. Попробуйте другой URL.")
+                            return
 
-            async with aiohttp.ClientSession() as session:
-                async with session.head(source, timeout=5) as response:
-                    if response.status != 200:
-                        logger.error(f"URL недоступен: {source}, статус: {response.status}")
-                        await interaction.followup.send("Не удалось загрузить видео. Попробуйте другой URL.")
+                self.current_tracks[guild_id] = title
+                self.current_sources.append(source)
+                self.loop[guild_id] = False
+
+                ffmpeg_options = {
+                    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10',
+                    'options': '-vn -bufsize 1M'
+                }
+                vol = self.volume.get(guild_id, 1.0)
+                audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
+                vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(guild_id)))
+                logger.info(f"Воспроизведение начато: {title}")
+                await interaction.followup.send(f"Играет сейчас: **{title}**")
+                return
+            except Exception as e:
+                logger.error(f"Ошибка при извлечении данных с аккаунтом {self.current_account_index + 1}: {e}")
+                if "Sign in to confirm" in str(e) or "blocked" in str(e):
+                    if await self.switch_account():
+                        await interaction.followup.send(f"Аккаунт заблокирован. Переключаюсь на следующий аккаунт.")
+                        continue
+                    else:
+                        await interaction.followup.send("Все аккаунты заблокированы или исчерпаны. Обратитесь к администратору.")
                         return
-
-            self.current_tracks[guild_id] = title
-            self.current_sources.append(source)
-            self.loop[guild_id] = False
-
-            ffmpeg_options = {
-                'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10',
-                'options': '-vn -bufsize 1M'
-            }
-            vol = self.volume.get(guild_id, 1.0)
-            audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
-            vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(guild_id)))
-            logger.info(f"Воспроизведение начато: {title}")
-            await interaction.followup.send(f"Играет сейчас: **{title}**")
-        except Exception as e:
-            logger.error(f"Ошибка при извлечении данных: {e}")
-            error_msg = "Не удалось загрузить видео или плейлист. Проверьте URL."
-            if "Sign in to confirm you’re not a bot" in str(e):
-                error_msg = "Видео требует аутентификации, которая не поддерживается без cookies."
-            elif "Requested format is not available" in str(e):
-                error_msg += " Запрошенный формат недоступен."
-            await interaction.followup.send(error_msg)
+                await interaction.followup.send(f"Ошибка: {e}")
+                return
 
     async def after_track(self, guild_id):
         vc = self.voice_clients.get(guild_id)
@@ -497,7 +503,7 @@ class Music(commands.Cog):
     async def queue(self, interaction: discord.Interaction, url: str = None):
         guild_id = interaction.guild.id
         if url:
-            self.queue.setdefault(guild_id, []).append({"url": url, "title": "Неизвестный трек"})
+            self.queue.setdefault(guild_id, []).append({"url": url, "title": "Неизвестный треk"})
             await interaction.response.send_message("Трек добавлен в очередь!")
         elif guild_id in self.queue and self.queue[guild_id]:
             queue_list = "\n".join([f"{i+1}. {track['title']}" for i, track in enumerate(self.queue[guild_id])])
