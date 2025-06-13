@@ -1,56 +1,39 @@
-import os
 import discord
 from discord.ext import commands
 import logging
+import os
 from dotenv import load_dotenv
-import asyncio
 
+# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logger.info("Запуск JamBot версии 2025-06-13")
 
+# Загрузка .env
 load_dotenv()
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-if not DISCORD_TOKEN:
-    logger.error("DISCORD_TOKEN не найден в переменных окружения!")
-    raise ValueError("Укажите DISCORD_TOKEN в .env")
+TOKEN = os.getenv("DISCORD_TOKEN")
+if not TOKEN:
+    logger.error("DISCORD_TOKEN не найден в .env")
+    exit(1)
 
+# Настройка бота
 intents = discord.Intents.default()
 intents.message_content = True
-intents.voice_states = True
 bot = commands.Bot(command_prefix='/', intents=intents)
 
 @bot.event
 async def on_ready():
     logger.info(f"Бот {bot.user} готов к работе!")
     try:
+        bot.load_extension("commands")
+        logger.info("Модуль commands загружен")
         synced = await bot.tree.sync()
         logger.info(f"Глобально синхронизировано {len(synced)} команд")
     except Exception as e:
-        logger.error(f"Ошибка глобальной синхронизации команд: {e}")
-
-async def load_cogs():
-    loaded_cogs = 0
-    for filename in os.listdir("./"):
-        if filename.endswith(".py") and filename != "JamBot.py" and filename != "cookies.py" and filename != "deploy_bot.py":
-            try:
-                await bot.load_extension(filename[:-3])
-                logger.info(f"Загружен модуль: {filename}")
-                loaded_cogs += 1
-            except Exception as e:
-                logger.error(f"Ошибка загрузки модуля {filename}: {e}")
-    logger.info(f"Загружено {loaded_cogs} модулей")
-
-async def main():
-    try:
-        await load_cogs()
-        while True:
-            try:
-                await bot.start(DISCORD_TOKEN)
-            except Exception as e:
-                logger.error(f"Ошибка подключения, переподключение через 5 секунд: {e}")
-                await asyncio.sleep(5)
-    except Exception as e:
-        logger.error(f"Критическая ошибка при запуске бота: {e}")
+        logger.error(f"Ошибка загрузки модуля commands: {e}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        bot.run(TOKEN)
+    except Exception as e:
+        logger.error(f"Ошибка запуска бота: {e}")
