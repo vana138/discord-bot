@@ -200,8 +200,6 @@ class Music(commands.Cog):
                 logger.error(f"Ошибка трека: {e}")
                 await interaction.followup.send("Ошибка загрузки трека.")
                 return
-
-        # Упрощённая проверка URL (ранее строка ~239)
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.head(source, timeout=5) as response:
