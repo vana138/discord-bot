@@ -7,7 +7,6 @@ import functools
 import logging
 import json
 import os
-import time
 import shutil
 import aiohttp
 from cookies import generate_cookies_file, is_cookies_file_valid
@@ -40,60 +39,44 @@ class Music(commands.Cog):
             if generate_cookies_file():
                 logger.info("Новый cookies.txt успешно создан")
             else:
-                logger.warning("Не удалось сгенерировать cookies.txt. Запустите cookies.py локально.")
+                logger.warning("Не удалось сгенерировать cookies.txt.")
 
-    @app_commands.command(name="refresh_cookies", description="Проверяет cookies.txt")
+    @app_commands.command(name="refresh_cookies", description="Проверяет и обновляет cookies.txt")
     async def refresh_cookies(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer(thinking=True)
-            if is_cookies_file_valid():
-                await interaction.followup.send("Файл cookies.txt действителен.")
-            else:
-                message = (
-                    "Файл cookies.txt отсутствует или устарел. Выполните:\n"
-                    "1. Установите Python и зависимости: `pip install -r requirements.txt`.\n"
-                    "2. Склонируйте репозиторий: `git clone https://github.com/vana138/discord-bot/`.\n"
-                    "3. Войдите в YouTube в Edge.\n"
-                    "4. Запустите `python deploy_bot.py`.\n"
-                    "Подробности: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
-                )
-                await interaction.followup.send(message)
-        except Exception as e:
-            logger.error(f"Ошибка в refresh_cookies: {e}")
-            await interaction.followup.send("Ошибка при проверке cookies.")
+        await interaction.response.defer(thinking=True)
+        if is_cookies_file_valid():
+            await interaction.followup.send("Файл cookies.txt действителен.")
+        else:
+            await interaction.followup.send("Cookies.txt устарел. Сгенерируйте новый локально с помощью deploy_bot.py.")
 
     @app_commands.command(name="play", description="Воспроизводит музыку из URL")
     async def play(self, interaction: discord.Interaction, url: str):
-        try:
-            await interaction.response.defer(thinking=True)
-            if not interaction.user.voice or not interaction.user.voice.channel:
-                await interaction.followup.send("Вы должны быть в голосовом канале!")
-                return
+        await interaction.response.defer(thinking=True)
+        if not interaction.user.voice or not interaction.user.voice.channel:
+            await interaction.followup.send("Вы должны быть в голосовом канале!")
+            return
 
-            voice_channel = interaction.user.voice.channel
-            guild_id = interaction.guild.id
-            self.voice_channel_ids[guild_id] = voice_channel.id
+        voice_channel = interaction.user.voice.channel
+        guild_id = interaction.guild.id
+        self.voice_channel_ids[guild_id] = voice_channel.id
 
-            if guild_id in self.voice_clients:
-                vc = self.voice_clients[guild_id]
-                if not vc.is_connected() or vc.channel != voice_channel:
-                    await vc.disconnect(force=True)
-                    del self.voice_clients[guild_id]
-
-            if guild_id not in self.voice_clients:
-                vc = await voice_channel.connect(reconnect=True, timeout=5.0)
-                self.voice_clients[guild_id] = vc
-                self.volume[guild_id] = 1.0
-
+        if guild_id in self.voice_clients:
             vc = self.voice_clients[guild_id]
-            if vc.is_playing():
-                self.queue.setdefault(guild_id, []).append({"url": url, "title": "Неизвестный трек"})
-                await interaction.followup.send("Трек добавлен в очередь!")
-                return
-            await self.play_track(interaction, url)
-        except Exception as e:
-            logger.error(f"Ошибка в play: {e}")
-            await interaction.followup.send("Ошибка подключения к каналу.")
+            if not vc.is_connected() or vc.channel != voice_channel:
+                await vc.disconnect(force=True)
+                del self.voice_clients[guild_id]
+
+        if guild_id not in self.voice_clients:
+            vc = await voice_channel.connect(reconnect=True, timeout=5.0)
+            self.voice_clients[guild_id] = vc
+            self.volume[guild_id] = 1.0
+
+        vc = self.voice_clients[guild_id]
+        if vc.is_playing():
+            self.queue.setdefault(guild_id, []).append({"url": url, "title": "Неизвестный трек"})
+            await interaction.followup.send("Трек добавлен в очередь!")
+            return
+        await self.play_track(interaction, url)
 
     async def play_track(self, interaction, url):
         guild_id = interaction.guild.id
@@ -107,18 +90,15 @@ class Music(commands.Cog):
             "format": "bestaudio/best",
             "noplaylist": False,
             "quiet": True,
-            "socket_timeout": 15,
+            "socket_timeout": 5,
             "extract_flat": True,
-            "retries": 10,
-            "max_retries": 3,
-            "playlistend": 120,
+            "retries": 3,
+            "max_retries": 2,
             "no_warnings": True,
             "force_generic_extractor": True,
         }
         if os.path.exists("cookies.txt"):
             ydl_opts["cookiefile"] = "cookies.txt"
-        else:
-            logger.warning("Файл cookies.txt не найден.")
 
         ydl = YoutubeDL(ydl_opts)
         loop = asyncio.get_event_loop()
@@ -147,15 +127,12 @@ class Music(commands.Cog):
         else:
             try:
                 func = functools.partial(ydl.extract_info, url, download=False)
-                info = await loop.run_in_executor(None, func)
+                info = await loop.run_in_executor(None, func, timeout=10)
                 if "entries" in info:
                     save_cache(url, info)
             except Exception as e:
                 logger.error(f"Ошибка извлечения данных: {e}")
-                error_msg = "Не удалось загрузить трек/плейлист."
-                if "Sign in" in str(e):
-                    error_msg += " Используйте `/refresh_cookies`."
-                await interaction.followup.send(error_msg)
+                await interaction.followup.send("Не удалось загрузить трек. Проверь URL или обнови cookies.")
                 return
 
         if "entries" in info:
@@ -164,8 +141,8 @@ class Music(commands.Cog):
                 ydl_opts_full = {
                     "format": "bestaudio/best",
                     "quiet": True,
-                    "socket_timeout": 15,
-                    "retries": 5,
+                    "socket_timeout": 5,
+                    "retries": 2,
                     "no_warnings": True,
                 }
                 if os.path.exists("cookies.txt"):
@@ -185,8 +162,8 @@ class Music(commands.Cog):
                 ydl_opts_full = {
                     "format": "bestaudio/best",
                     "quiet": True,
-                    "socket_timeout": 15,
-                    "retries": 5,
+                    "socket_timeout": 5,
+                    "retries": 2,
                     "no_warnings": True,
                 }
                 if os.path.exists("cookies.txt"):
@@ -200,9 +177,10 @@ class Music(commands.Cog):
                 logger.error(f"Ошибка трека: {e}")
                 await interaction.followup.send("Ошибка загрузки трека.")
                 return
+
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.head(source, timeout=5) as response:
+                async with session.head(source, timeout=3) as response:
                     if response.status != 200:
                         logger.error(f"URL недоступен: {source}, статус: {response.status}")
                         await interaction.followup.send("Ошибка загрузки трека.")
@@ -217,17 +195,13 @@ class Music(commands.Cog):
         self.loop[guild_id] = False
 
         ffmpeg_options = {
-            "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10",
-            "options": "-vn -bufsize 256k"
+            "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+            "options": "-vn -bufsize 128k"
         }
         vol = self.volume.get(guild_id, 1.0)
         audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
-        try:
-            vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(guild_id)))
-            await interaction.followup.send(f"Играет: **{title}**")
-        except discord.ClientException as e:
-            logger.error(f"Ошибка воспроизведения: {e}")
-            await interaction.followup.send("Ошибка воспроизведения.")
+        vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(guild_id)))
+        await interaction.followup.send(f"Играет: **{title}**")
 
     async def after_track(self, guild_id):
         try:
@@ -264,8 +238,8 @@ class Music(commands.Cog):
             ydl_opts = {
                 "format": "bestaudio/best",
                 "quiet": True,
-                "socket_timeout": 15,
-                "retries": 5,
+                "socket_timeout": 5,
+                "retries": 2,
                 "no_warnings": True,
             }
             if os.path.exists("cookies.txt"):
@@ -284,7 +258,7 @@ class Music(commands.Cog):
 
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.head(source, timeout=5) as response:
+                    async with session.head(source, timeout=3) as response:
                         if response.status != 200:
                             logger.error(f"URL недоступен: {source}, статус: {response.status}")
                             await self.after_track(guild_id)
@@ -297,8 +271,8 @@ class Music(commands.Cog):
             self.current_tracks[guild_id] = title
             self.current_sources[guild_id] = source
             ffmpeg_options = {
-                "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10",
-                "options": "-vn -bufsize 256k"
+                "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+                "options": "-vn -bufsize 128k"
             }
             vol = self.volume.get(guild_id, 1.0)
             audio_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
@@ -311,186 +285,138 @@ class Music(commands.Cog):
 
     @app_commands.command(name="nowplaying", description="Показывает текущий трек")
     async def nowplaying(self, interaction: discord.Interaction):
-        try:
-            title = self.current_tracks.get(interaction.guild.id, None)
-            if title:
-                await interaction.response.send_message(f"Сейчас играет: **{title}**")
-            else:
-                await interaction.response.send_message("Ничего не играет.")
-        except Exception as e:
-            logger.error(f"Ошибка в nowplaying: {e}")
-            await interaction.response.send_message("Ошибка команды.")
+        title = self.current_tracks.get(interaction.guild.id, None)
+        if title:
+            await interaction.response.send_message(f"Сейчас играет: **{title}**")
+        else:
+            await interaction.response.send_message("Ничего не играет.")
 
     @app_commands.command(name="pause", description="Ставит музыку на паузу")
     async def pause(self, interaction: discord.Interaction):
-        try:
-            if interaction.guild.id in self.voice_clients:
-                vc = self.voice_clients[interaction.guild.id]
-                if vc.is_playing():
-                    vc.pause()
-                    await interaction.response.send_message("Музыка на паузе.")
-                else:
-                    await interaction.response.send_message("Музыка не играет.")
+        if interaction.guild.id in self.voice_clients:
+            vc = self.voice_clients[interaction.guild.id]
+            if vc.is_playing():
+                vc.pause()
+                await interaction.response.send_message("Музыка на паузе.")
             else:
-                await interaction.response.send_message("Бот не в канале.")
-        except Exception as e:
-            logger.error(f"Ошибка в pause: {e}")
-            await interaction.response.send_message("Ошибка команды.")
+                await interaction.response.send_message("Музыка не играет.")
+        else:
+            await interaction.response.send_message("Бот не в канале.")
 
     @app_commands.command(name="resume", description="Продолжает воспроизведение")
     async def resume(self, interaction: discord.Interaction):
-        try:
-            if interaction.guild.id in self.voice_clients:
-                vc = self.voice_clients[interaction.guild.id]
-                if vc.is_paused():
-                    vc.resume()
-                    title = self.current_tracks.get(interaction.guild.id, "Неизвестный трек")
-                    await interaction.response.send_message(f"Продолжено: **{title}**")
-                else:
-                    await interaction.response.send_message("Музыка не на паузе.")
+        if interaction.guild.id in self.voice_clients:
+            vc = self.voice_clients[interaction.guild.id]
+            if vc.is_paused():
+                vc.resume()
+                title = self.current_tracks.get(interaction.guild.id, "Неизвестный трек")
+                await interaction.response.send_message(f"Продолжено: **{title}**")
             else:
-                await interaction.response.send_message("Бот не в канале.")
-        except Exception as e:
-            logger.error(f"Ошибка в resume: {e}")
-            await interaction.response.send_message("Ошибка команды.")
+                await interaction.response.send_message("Музыка не на паузе.")
+        else:
+            await interaction.response.send_message("Бот не в канале.")
 
     @app_commands.command(name="stop", description="Останавливает и отключает бота")
     async def stop(self, interaction: discord.Interaction):
-        try:
-            if interaction.guild.id in self.voice_clients:
-                vc = self.voice_clients[interaction.guild.id]
-                await interaction.response.defer(thinking=True)
-                await vc.disconnect(force=True)
-                del self.voice_clients[interaction.guild.id]
-                self.current_tracks.pop(interaction.guild.id, None)
-                self.current_sources.pop(interaction.guild.id, None)
-                await interaction.followup.send("Бот отключен.")
-            else:
-                await interaction.response.send_message("Бот не в канале.")
-        except Exception as e:
-            logger.error(f"Ошибка в stop: {e}")
-            await interaction.followup.send("Ошибка команды.")
+        await interaction.response.defer(thinking=True)
+        if interaction.guild.id in self.voice_clients:
+            vc = self.voice_clients[interaction.guild.id]
+            await vc.disconnect(force=True)
+            del self.voice_clients[interaction.guild.id]
+            self.current_tracks.pop(interaction.guild.id, None)
+            self.current_sources.pop(interaction.guild.id, None)
+            await interaction.followup.send("Бот отключен.")
+        else:
+            await interaction.response.send_message("Бот не в канале.")
 
     @app_commands.command(name="skip", description="Пропускает текущий трек")
     async def skip(self, interaction: discord.Interaction):
-        try:
-            if interaction.guild.id in self.voice_clients:
-                vc = self.voice_clients[interaction.guild.id]
-                if vc.is_playing():
-                    vc.stop()
-                    await interaction.response.send_message("Трек пропущен.")
-                else:
-                    await interaction.response.send_message("Ничего не играет.")
+        if interaction.guild.id in self.voice_clients:
+            vc = self.voice_clients[interaction.guild.id]
+            if vc.is_playing():
+                vc.stop()
+                await interaction.response.send_message("Трек пропущен.")
             else:
-                await interaction.response.send_message("Бот не в канале.")
-        except Exception as e:
-            logger.error(f"Ошибка в skip: {e}")
-            await interaction.response.send_message("Ошибка команды.")
+                await interaction.response.send_message("Ничего не играет.")
+        else:
+            await interaction.response.send_message("Бот не в канале.")
 
     @app_commands.command(name="seek", description="Перематывает трек (в секундах)")
     async def seek(self, interaction: discord.Interaction, seconds: int):
-        try:
-            if interaction.guild.id in self.voice_clients:
-                vc = self.voice_clients[interaction.guild.id]
-                if vc.is_playing() or vc.is_paused():
-                    source = self.current_sources.get(interaction.guild.id)
-                    if not source:
-                        await interaction.response.send_message("Трек не найден!")
-                        return
-                    vc.stop()
-                    ffmpeg_options = {
-                        "before_options": f"-ss {seconds} -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10",
-                        "options": "-vn -bufsize 256k"
-                    }
-                    vol = self.volume.get(interaction.guild.id, 1.0)
-                    new_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
-                    vc.play(new_source, after=lambda e: self.bot.loop.create_task(self.after_track(interaction.guild.id)))
-                    await interaction.response.send_message(f"Перемотано на {seconds} сек.")
-                else:
-                    await interaction.response.send_message("Ничего не играет.")
+        if interaction.guild.id in self.voice_clients:
+            vc = self.voice_clients[interaction.guild.id]
+            if vc.is_playing() or vc.is_paused():
+                source = self.current_sources.get(interaction.guild.id)
+                if not source:
+                    await interaction.response.send_message("Трек не найден!")
+                    return
+                vc.stop()
+                ffmpeg_options = {
+                    "before_options": f"-ss {seconds} -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+                    "options": "-vn -bufsize 128k"
+                }
+                vol = self.volume.get(interaction.guild.id, 1.0)
+                new_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
+                vc.play(new_source, after=lambda e: self.bot.loop.create_task(self.after_track(interaction.guild.id)))
+                await interaction.response.send_message(f"Перемотано на {seconds} сек.")
             else:
-                await interaction.response.send_message("Бот не в канале.")
-        except Exception as e:
-            logger.error(f"Ошибка в seek: {e}")
-            await interaction.response.send_message("Ошибка команды.")
+                await interaction.response.send_message("Ничего не играет.")
+        else:
+            await interaction.response.send_message("Бот не в канале.")
 
     @app_commands.command(name="replay", description="Включает/выключает повтор трека")
     async def replay(self, interaction: discord.Interaction):
-        try:
-            guild_id = interaction.guild.id
-            self.loop[guild_id] = not self.loop.get(guild_id, False)
-            status = "включен" if self.loop[guild_id] else "выключен"
-            await interaction.response.send_message(f"Повтор трека {status}.")
-        except Exception as e:
-            logger.error(f"Ошибка в replay: {e}")
-            await interaction.response.send_message("Ошибка команды.")
+        guild_id = interaction.guild.id
+        self.loop[guild_id] = not self.loop.get(guild_id, False)
+        status = "включен" if self.loop[guild_id] else "выключен"
+        await interaction.response.send_message(f"Повтор трека {status}.")
 
     @app_commands.command(name="queue", description="Добавляет трек или показывает очередь")
     async def queue(self, interaction: discord.Interaction, url: str = None):
-        try:
-            guild_id = interaction.guild.id
-            if url:
-                self.queue.setdefault(guild_id, []).append({"url": url, "title": "Неизвестный трек"})
-                await interaction.response.send_message("Трек в очереди!")
-            elif guild_id in self.queue and self.queue[guild_id]:
-                queue_list = "\n".join([f"{i+1}. {track['title']}" for i, track in enumerate(self.queue[guild_id])])
-                await interaction.response.send_message(f"Очередь:\n{queue_list}")
-            else:
-                await interaction.response.send_message("Очередь пуста.")
-        except Exception as e:
-            logger.error(f"Ошибка в queue: {e}")
-            await interaction.response.send_message("Ошибка команды.")
+        guild_id = interaction.guild.id
+        if url:
+            self.queue.setdefault(guild_id, []).append({"url": url, "title": "Неизвестный трек"})
+            await interaction.response.send_message("Трек в очереди!")
+        elif guild_id in self.queue and self.queue[guild_id]:
+            queue_list = "\n".join([f"{i+1}. {track['title']}" for i, track in enumerate(self.queue[guild_id])])
+            await interaction.response.send_message(f"Очередь:\n{queue_list}")
+        else:
+            await interaction.response.send_message("Очередь пуста.")
 
     @app_commands.command(name="unqueue", description="Удаляет трек из очереди")
     async def unqueue(self, interaction: discord.Interaction, index: int):
-        try:
-            guild_id = interaction.guild.id
-            if guild_id in self.queue and 0 <= index - 1 < len(self.queue[guild_id]):
-                removed_track = self.queue[guild_id].pop(index - 1)
-                await interaction.response.send_message(f"Удалён: {removed_track['title']}")
-            else:
-                await interaction.response.send_message("Неверный индекс или очередь пуста.")
-        except Exception as e:
-            logger.error(f"Ошибка в unqueue: {e}")
-            await interaction.response.send_message("Ошибка команды.")
+        guild_id = interaction.guild.id
+        if guild_id in self.queue and 0 <= index - 1 < len(self.queue[guild_id]):
+            removed_track = self.queue[guild_id].pop(index - 1)
+            await interaction.response.send_message(f"Удалён: {removed_track['title']}")
+        else:
+            await interaction.response.send_message("Неверный индекс или очередь пуста.")
 
     @app_commands.command(name="volume", description="Изменяет громкость (0-100)")
     async def volume(self, interaction: discord.Interaction, vol: int):
-        try:
-            if not 0 <= vol <= 100:
-                await interaction.response.send_message("Громкость от 0 до 100.")
-                return
-            guild_id = interaction.guild.id
-            self.volume[guild_id] = vol / 100.0
-            if guild_id in self.voice_clients and self.current_sources.get(guild_id):
-                vc = self.voice_clients[guild_id]
-                if hasattr(vc.source, 'volume'):
-                    vc.source.volume = vol / 100.0
-            await interaction.response.send_message(f"Громкость: {vol}%.")
-        except Exception as e:
-            logger.error(f"Ошибка в volume: {e}")
-            await interaction.response.send_message("Ошибка команды.")
+        if not 0 <= vol <= 100:
+            await interaction.response.send_message("Громкость от 0 до 100.")
+            return
+        guild_id = interaction.guild.id
+        self.volume[guild_id] = vol / 100.0
+        if guild_id in self.voice_clients and self.current_sources.get(guild_id):
+            vc = self.voice_clients[guild_id]
+            if hasattr(vc.source, 'volume'):
+                vc.source.volume = vol / 100.0
+        await interaction.response.send_message(f"Громкость: {vol}%.")
 
     @app_commands.command(name="loopqueue", description="Включает/выключает повтор очереди")
     async def loopqueue(self, interaction: discord.Interaction):
-        try:
-            guild_id = interaction.guild.id
-            self.loop_queue[guild_id] = not self.loop_queue.get(guild_id, False)
-            status = "включен" if self.loop_queue[guild_id] else "выключен"
-            await interaction.response.send_message(f"Повтор очереди {status}.")
-        except Exception as e:
-            logger.error(f"Ошибка в loopqueue: {e}")
-            await interaction.response.send_message("Ошибка команды.")
+        guild_id = interaction.guild.id
+        self.loop_queue[guild_id] = not self.loop_queue.get(guild_id, False)
+        status = "включен" if self.loop_queue[guild_id] else "выключен"
+        await interaction.response.send_message(f"Повтор очереди {status}.")
 
     @app_commands.command(name="clearqueue", description="Очищает очередь")
     async def clearqueue(self, interaction: discord.Interaction):
-        try:
-            guild_id = interaction.guild.id
-            self.queue[guild_id] = []
-            await interaction.response.send_message("Очередь очищена.")
-        except Exception as e:
-            logger.error(f"Ошибка в clearqueue: {e}")
-            await interaction.response.send_message("Ошибка команды.")
+        guild_id = interaction.guild.id
+        self.queue[guild_id] = []
+        await interaction.response.send_message("Очередь очищена.")
 
 async def setup(bot):
     try:
