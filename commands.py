@@ -43,40 +43,53 @@ class Music(commands.Cog):
 
     @app_commands.command(name="refresh_cookies", description="Проверяет и обновляет cookies.txt")
     async def refresh_cookies(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True)
-        if is_cookies_file_valid():
-            await interaction.followup.send("Файл cookies.txt действителен.")
-        else:
-            await interaction.followup.send("Cookies.txt устарел. Сгенерируйте новый локально с помощью deploy_bot.py.")
+        try:
+            await interaction.response.defer(thinking=True)
+            if is_cookies_file_valid():
+                await interaction.followup.send("Файл cookies.txt действителен.")
+            else:
+                await interaction.followup.send("Cookies.txt устарел. Сгенерируйте новый локально с помощью deploy_bot.py.")
+        except discord.errors.NotFound:
+            logger.warning("Интеракция истекла для /refresh_cookies")
+            await interaction.followup.send("Время ответа истекло. Попробуйте снова.", ephemeral=True)
 
     @app_commands.command(name="play", description="Воспроизводит музыку из URL")
     async def play(self, interaction: discord.Interaction, url: str):
-        await interaction.response.defer(thinking=True)
-        if not interaction.user.voice or not interaction.user.voice.channel:
-            await interaction.followup.send("Вы должны быть в голосовом канале!")
-            return
+        try:
+            await interaction.response.defer(thinking=True)
+            if not interaction.user.voice or not interaction.user.voice.channel:
+                await interaction.followup.send("Вы должны быть в голосовом канале!")
+                return
 
-        voice_channel = interaction.user.voice.channel
-        guild_id = interaction.guild.id
-        self.voice_channel_ids[guild_id] = voice_channel.id
+            voice_channel = interaction.user.voice.channel
+            guild_id = interaction.guild.id
+            self.voice_channel_ids[guild_id] = voice_channel.id
 
-        if guild_id in self.voice_clients:
+            if guild_id in self.voice_clients:
+                vc = self.voice_clients[guild_id]
+                if not vc.is_connected() or vc.channel != voice_channel:
+                    await vc.disconnect(force=True)
+                    del self.voice_clients[guild_id]
+
+            if guild_id not in self.voice_clients:
+                try:
+                    vc = await voice_channel.connect(reconnect=True, timeout=5.0)
+                    self.voice_clients[guild_id] = vc
+                    self.volume[guild_id] = 1.0
+                except Exception as e:
+                    logger.error(f"Ошибка подключения к голосу: {e}")
+                    await interaction.followup.send("Не удалось подключиться к голосовому каналу. Возможно, хостинг не поддерживает эту функцию.")
+                    return
+
             vc = self.voice_clients[guild_id]
-            if not vc.is_connected() or vc.channel != voice_channel:
-                await vc.disconnect(force=True)
-                del self.voice_clients[guild_id]
-
-        if guild_id not in self.voice_clients:
-            vc = await voice_channel.connect(reconnect=True, timeout=5.0)
-            self.voice_clients[guild_id] = vc
-            self.volume[guild_id] = 1.0
-
-        vc = self.voice_clients[guild_id]
-        if vc.is_playing():
-            self.queue.setdefault(guild_id, []).append({"url": url, "title": "Неизвестный трек"})
-            await interaction.followup.send("Трек добавлен в очередь!")
-            return
-        await self.play_track(interaction, url)
+            if vc.is_playing():
+                self.queue.setdefault(guild_id, []).append({"url": url, "title": "Неизвестный трек"})
+                await interaction.followup.send("Трек добавлен в очередь!")
+                return
+            await self.play_track(interaction, url)
+        except discord.errors.NotFound:
+            logger.warning("Интеракция истекла для /play")
+            await interaction.followup.send("Время ответа истекло. Попробуйте снова.", ephemeral=True)
 
     async def play_track(self, interaction, url):
         guild_id = interaction.guild.id
@@ -285,138 +298,197 @@ class Music(commands.Cog):
 
     @app_commands.command(name="nowplaying", description="Показывает текущий трек")
     async def nowplaying(self, interaction: discord.Interaction):
-        title = self.current_tracks.get(interaction.guild.id, None)
-        if title:
-            await interaction.response.send_message(f"Сейчас играет: **{title}**")
-        else:
-            await interaction.response.send_message("Ничего не играет.")
+        try:
+            await interaction.response.defer(thinking=True)
+            title = self.current_tracks.get(interaction.guild.id, None)
+            if title:
+                await interaction.followup.send(f"Сейчас играет: **{title}**")
+            else:
+                await interaction.followup.send("Ничего не играет.")
+        except discord.errors.NotFound:
+            logger.warning("Интеракция истекла для /nowplaying")
+            await interaction.followup.send("Время ответа истекло. Попробуйте снова.", ephemeral=True)
 
     @app_commands.command(name="pause", description="Ставит музыку на паузу")
     async def pause(self, interaction: discord.Interaction):
-        if interaction.guild.id in self.voice_clients:
-            vc = self.voice_clients[interaction.guild.id]
-            if vc.is_playing():
-                vc.pause()
-                await interaction.response.send_message("Музыка на паузе.")
+        try:
+            await interaction.response.defer(thinking=True)
+            if interaction.guild.id in self.voice_clients:
+                vc = self.voice_clients[interaction.guild.id]
+                if vc.is_playing():
+                    vc.pause()
+                    await interaction.followup.send("Музыка на паузе.")
+                else:
+                    await interaction.followup.send("Музыка не играет.")
             else:
-                await interaction.response.send_message("Музыка не играет.")
-        else:
-            await interaction.response.send_message("Бот не в канале.")
+                await interaction.followup.send("Бот не в канале.")
+        except discord.errors.NotFound:
+            logger.warning("Интеракция истекла для /pause")
+            await interaction.followup.send("Время ответа истекло. Попробуйте снова.", ephemeral=True)
 
     @app_commands.command(name="resume", description="Продолжает воспроизведение")
     async def resume(self, interaction: discord.Interaction):
-        if interaction.guild.id in self.voice_clients:
-            vc = self.voice_clients[interaction.guild.id]
-            if vc.is_paused():
-                vc.resume()
-                title = self.current_tracks.get(interaction.guild.id, "Неизвестный трек")
-                await interaction.response.send_message(f"Продолжено: **{title}**")
+        try:
+            await interaction.response.defer(thinking=True)
+            if interaction.guild.id in self.voice_clients:
+                vc = self.voice_clients[interaction.guild.id]
+                if vc.is_paused():
+                    vc.resume()
+                    title = self.current_tracks.get(interaction.guild.id, "Неизвестный трек")
+                    await interaction.followup.send(f"Продолжено: **{title}**")
+                else:
+                    await interaction.followup.send("Музыка не на паузе.")
             else:
-                await interaction.response.send_message("Музыка не на паузе.")
-        else:
-            await interaction.response.send_message("Бот не в канале.")
+                await interaction.followup.send("Бот не в канале.")
+        except discord.errors.NotFound:
+            logger.warning("Интеракция истекла для /resume")
+            await interaction.followup.send("Время ответа истекло. Попробуйте снова.", ephemeral=True)
 
     @app_commands.command(name="stop", description="Останавливает и отключает бота")
     async def stop(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True)
-        if interaction.guild.id in self.voice_clients:
-            vc = self.voice_clients[interaction.guild.id]
-            await vc.disconnect(force=True)
-            del self.voice_clients[interaction.guild.id]
-            self.current_tracks.pop(interaction.guild.id, None)
-            self.current_sources.pop(interaction.guild.id, None)
-            await interaction.followup.send("Бот отключен.")
-        else:
-            await interaction.response.send_message("Бот не в канале.")
+        try:
+            await interaction.response.defer(thinking=True)
+            if interaction.guild.id in self.voice_clients:
+                vc = self.voice_clients[interaction.guild.id]
+                await vc.disconnect(force=True)
+                del self.voice_clients[interaction.guild.id]
+                self.current_tracks.pop(interaction.guild.id, None)
+                self.current_sources.pop(interaction.guild.id, None)
+                await interaction.followup.send("Бот отключен.")
+            else:
+                await interaction.response.send_message("Бот не в канале.")
+        except discord.errors.NotFound:
+            logger.warning("Интеракция истекла для /stop")
+            await interaction.followup.send("Время ответа истекло. Попробуйте снова.", ephemeral=True)
 
     @app_commands.command(name="skip", description="Пропускает текущий трек")
     async def skip(self, interaction: discord.Interaction):
-        if interaction.guild.id in self.voice_clients:
-            vc = self.voice_clients[interaction.guild.id]
-            if vc.is_playing():
-                vc.stop()
-                await interaction.response.send_message("Трек пропущен.")
+        try:
+            await interaction.response.defer(thinking=True)
+            if interaction.guild.id in self.voice_clients:
+                vc = self.voice_clients[interaction.guild.id]
+                if vc.is_playing():
+                    vc.stop()
+                    await interaction.followup.send("Трек пропущен.")
+                else:
+                    await interaction.followup.send("Ничего не играет.")
             else:
-                await interaction.response.send_message("Ничего не играет.")
-        else:
-            await interaction.response.send_message("Бот не в канале.")
+                await interaction.followup.send("Бот не в канале.")
+        except discord.errors.NotFound:
+            logger.warning("Интеракция истекла для /skip")
+            await interaction.followup.send("Время ответа истекло. Попробуйте снова.", ephemeral=True)
 
     @app_commands.command(name="seek", description="Перематывает трек (в секундах)")
     async def seek(self, interaction: discord.Interaction, seconds: int):
-        if interaction.guild.id in self.voice_clients:
-            vc = self.voice_clients[interaction.guild.id]
-            if vc.is_playing() or vc.is_paused():
-                source = self.current_sources.get(interaction.guild.id)
-                if not source:
-                    await interaction.response.send_message("Трек не найден!")
-                    return
-                vc.stop()
-                ffmpeg_options = {
-                    "before_options": f"-ss {seconds} -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-                    "options": "-vn -bufsize 128k"
-                }
-                vol = self.volume.get(interaction.guild.id, 1.0)
-                new_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
-                vc.play(new_source, after=lambda e: self.bot.loop.create_task(self.after_track(interaction.guild.id)))
-                await interaction.response.send_message(f"Перемотано на {seconds} сек.")
+        try:
+            await interaction.response.defer(thinking=True)
+            if interaction.guild.id in self.voice_clients:
+                vc = self.voice_clients[interaction.guild.id]
+                if vc.is_playing() or vc.is_paused():
+                    source = self.current_sources.get(interaction.guild.id)
+                    if not source:
+                        await interaction.followup.send("Трек не найден!")
+                        return
+                    vc.stop()
+                    ffmpeg_options = {
+                        "before_options": f"-ss {seconds} -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+                        "options": "-vn -bufsize 128k"
+                    }
+                    vol = self.volume.get(interaction.guild.id, 1.0)
+                    new_source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(source, **ffmpeg_options), volume=vol)
+                    vc.play(new_source, after=lambda e: self.bot.loop.create_task(self.after_track(interaction.guild.id)))
+                    await interaction.followup.send(f"Перемотано на {seconds} сек.")
+                else:
+                    await interaction.followup.send("Ничего не играет.")
             else:
-                await interaction.response.send_message("Ничего не играет.")
-        else:
-            await interaction.response.send_message("Бот не в канале.")
+                await interaction.followup.send("Бот не в канале.")
+        except discord.errors.NotFound:
+            logger.warning("Интеракция истекла для /seek")
+            await interaction.followup.send("Время ответа истекло. Попробуйте снова.", ephemeral=True)
 
     @app_commands.command(name="replay", description="Включает/выключает повтор трека")
     async def replay(self, interaction: discord.Interaction):
-        guild_id = interaction.guild.id
-        self.loop[guild_id] = not self.loop.get(guild_id, False)
-        status = "включен" if self.loop[guild_id] else "выключен"
-        await interaction.response.send_message(f"Повтор трека {status}.")
+        try:
+            await interaction.response.defer(thinking=True)
+            guild_id = interaction.guild.id
+            self.loop[guild_id] = not self.loop.get(guild_id, False)
+            status = "включен" if self.loop[guild_id] else "выключен"
+            await interaction.followup.send(f"Повтор трека {status}.")
+        except discord.errors.NotFound:
+            logger.warning("Интеракция истекла для /replay")
+            await interaction.followup.send("Время ответа истекло. Попробуйте снова.", ephemeral=True)
 
     @app_commands.command(name="queue", description="Добавляет трек или показывает очередь")
     async def queue(self, interaction: discord.Interaction, url: str = None):
-        guild_id = interaction.guild.id
-        if url:
-            self.queue.setdefault(guild_id, []).append({"url": url, "title": "Неизвестный трек"})
-            await interaction.response.send_message("Трек в очереди!")
-        elif guild_id in self.queue and self.queue[guild_id]:
-            queue_list = "\n".join([f"{i+1}. {track['title']}" for i, track in enumerate(self.queue[guild_id])])
-            await interaction.response.send_message(f"Очередь:\n{queue_list}")
-        else:
-            await interaction.response.send_message("Очередь пуста.")
+        try:
+            await interaction.response.defer(thinking=True)
+            guild_id = interaction.guild.id
+            if url:
+                self.queue.setdefault(guild_id, []).append({"url": url, "title": "Неизвестный трек"})
+                await interaction.followup.send("Трек в очереди!")
+            elif guild_id in self.queue and self.queue[guild_id]:
+                queue_list = "\n".join([f"{i+1}. {track['title']}" for i, track in enumerate(self.queue[guild_id])])
+                await interaction.followup.send(f"Очередь:\n{queue_list}")
+            else:
+                await interaction.followup.send("Очередь пуста.")
+        except discord.errors.NotFound:
+            logger.warning("Интеракция истекла для /queue")
+            await interaction.followup.send("Время ответа истекло. Попробуйте снова.", ephemeral=True)
 
     @app_commands.command(name="unqueue", description="Удаляет трек из очереди")
     async def unqueue(self, interaction: discord.Interaction, index: int):
-        guild_id = interaction.guild.id
-        if guild_id in self.queue and 0 <= index - 1 < len(self.queue[guild_id]):
-            removed_track = self.queue[guild_id].pop(index - 1)
-            await interaction.response.send_message(f"Удалён: {removed_track['title']}")
-        else:
-            await interaction.response.send_message("Неверный индекс или очередь пуста.")
+        try:
+            await interaction.response.defer(thinking=True)
+            guild_id = interaction.guild.id
+            if guild_id in self.queue and 0 <= index - 1 < len(self.queue[guild_id]):
+                removed_track = self.queue[guild_id].pop(index - 1)
+                await interaction.followup.send(f"Удалён: {removed_track['title']}")
+            else:
+                await interaction.followup.send("Неверный индекс или очередь пуста.")
+        except discord.errors.NotFound:
+            logger.warning("Интеракция истекла для /unqueue")
+            await interaction.followup.send("Время ответа истекло. Попробуйте снова.", ephemeral=True)
 
     @app_commands.command(name="volume", description="Изменяет громкость (0-100)")
     async def volume(self, interaction: discord.Interaction, vol: int):
-        if not 0 <= vol <= 100:
-            await interaction.response.send_message("Громкость от 0 до 100.")
-            return
-        guild_id = interaction.guild.id
-        self.volume[guild_id] = vol / 100.0
-        if guild_id in self.voice_clients and self.current_sources.get(guild_id):
-            vc = self.voice_clients[guild_id]
-            if hasattr(vc.source, 'volume'):
-                vc.source.volume = vol / 100.0
-        await interaction.response.send_message(f"Громкость: {vol}%.")
+        try:
+            await interaction.response.defer(thinking=True)
+            if not 0 <= vol <= 100:
+                await interaction.followup.send("Громкость от 0 до 100.")
+                return
+            guild_id = interaction.guild.id
+            self.volume[guild_id] = vol / 100.0
+            if guild_id in self.voice_clients and self.current_sources.get(guild_id):
+                vc = self.voice_clients[guild_id]
+                if hasattr(vc.source, 'volume'):
+                    vc.source.volume = vol / 100.0
+            await interaction.followup.send(f"Громкость: {vol}%.")
+        except discord.errors.NotFound:
+            logger.warning("Интеракция истекла для /volume")
+            await interaction.followup.send("Время ответа истекло. Попробуйте снова.", ephemeral=True)
 
     @app_commands.command(name="loopqueue", description="Включает/выключает повтор очереди")
     async def loopqueue(self, interaction: discord.Interaction):
-        guild_id = interaction.guild.id
-        self.loop_queue[guild_id] = not self.loop_queue.get(guild_id, False)
-        status = "включен" if self.loop_queue[guild_id] else "выключен"
-        await interaction.response.send_message(f"Повтор очереди {status}.")
+        try:
+            await interaction.response.defer(thinking=True)
+            guild_id = interaction.guild.id
+            self.loop_queue[guild_id] = not self.loop_queue.get(guild_id, False)
+            status = "включен" if self.loop_queue[guild_id] else "выключен"
+            await interaction.followup.send(f"Повтор очереди {status}.")
+        except discord.errors.NotFound:
+            logger.warning("Интеракция истекла для /loopqueue")
+            await interaction.followup.send("Время ответа истекло. Попробуйте снова.", ephemeral=True)
 
     @app_commands.command(name="clearqueue", description="Очищает очередь")
     async def clearqueue(self, interaction: discord.Interaction):
-        guild_id = interaction.guild.id
-        self.queue[guild_id] = []
-        await interaction.response.send_message("Очередь очищена.")
+        try:
+            await interaction.response.defer(thinking=True)
+            guild_id = interaction.guild.id
+            self.queue[guild_id] = []
+            await interaction.followup.send("Очередь очищена.")
+        except discord.errors.NotFound:
+            logger.warning("Интеракция истекла для /clearqueue")
+            await interaction.followup.send("Время ответа истекло. Попробуйте снова.", ephemeral=True)
 
 async def setup(bot):
     try:
