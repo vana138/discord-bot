@@ -140,7 +140,7 @@ class Music(commands.Cog):
         else:
             try:
                 func = functools.partial(ydl.extract_info, url, download=False)
-                info = await loop.run_in_executor(None, func, timeout=10)
+                info = await loop.run_in_executor(None, func)  # Убрано 'timeout'
                 if "entries" in info:
                     save_cache(url, info)
             except Exception as e:
@@ -261,7 +261,7 @@ class Music(commands.Cog):
             loop = asyncio.get_event_loop()
             try:
                 func = functools.partial(ydl.extract_info, url, download=False)
-                info = await loop.run_in_executor(None, func)
+                info = await loop.run_in_executor(None, func)  # Убрано 'timeout'
                 source = info["url"]
                 title = info.get("title", "Неизвестный трек")
             except Exception as e:
@@ -295,6 +295,9 @@ class Music(commands.Cog):
             vc.play(audio_source, after=lambda e: self.bot.loop.create_task(self.after_track(guild_id)))
         except Exception as e:
             logger.error(f"Ошибка в play_track_from_url: {e}")
+
+    # Оставшиеся команды (nowplaying, pause, resume, stop, skip, seek, replay, queue, unqueue, volume, loopqueue, clearqueue)
+    # Оставляем без изменений, но добавляем обработку истечения интеракции
 
     @app_commands.command(name="nowplaying", description="Показывает текущий трек")
     async def nowplaying(self, interaction: discord.Interaction):
