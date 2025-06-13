@@ -3,6 +3,7 @@ import discord
 from discord.ext import commands
 import logging
 from dotenv import load_dotenv
+import asyncio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -42,10 +43,14 @@ async def load_cogs():
 async def main():
     try:
         await load_cogs()
-        await bot.start(DISCORD_TOKEN)
+        while True:
+            try:
+                await bot.start(DISCORD_TOKEN)
+            except Exception as e:
+                logger.error(f"Ошибка подключения, переподключение через 5 секунд: {e}")
+                await asyncio.sleep(5)
     except Exception as e:
-        logger.error(f"Ошибка при запуске бота: {e}")
+        logger.error(f"Критическая ошибка при запуске бота: {e}")
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())
